@@ -1,0 +1,7 @@
+# https://docs.socket.dev/docs/socket-yml
+version: 2
+
+projectIgnorePaths: ["tools"]
+
+githubApp:
+  enabled: true

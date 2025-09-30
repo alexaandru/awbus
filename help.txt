@@ -1,0 +1,82 @@
+awbus - AWS credential_process helper using system keyring
+
+DESCRIPTION
+    awbus securely stores AWS credentials in your system keyring and provides
+    them to AWS CLI/SDK via the credential_process interface. It supports both
+    static credentials and assumed roles with automatic session refresh.
+    It is OS independent, it supports all platforms supported by https://github.com/zalando/go-keyring
+
+USAGE
+    awbus [command]
+
+ENVIRONMENT VARIABLES
+    AWS_PROFILE     Profile name (default: "default")
+    AWS_REGION      AWS region for STS operations (default: "us-east-1")
+    SKEW_PAD        Refresh window before expiration (default: "120s")
+    SESSION_TTL     AssumeRole session duration (default: "1h")
+
+COMMANDS
+    load (default)    Load and return credentials for current profile
+    store             Store static AWS credentials (interactive)
+    store-assume      Store assumed role configuration (interactive)
+    rotate            Rotate static credentials (create new, delete old)
+    delete            Delete profile from keyring (interactive)
+    version           Show version
+    help              Show this help message
+
+CREDENTIAL TYPES
+
+    Static Credentials
+        Direct AWS access keys stored in keyring. Suitable for IAM users
+        with long-term access keys.
+
+    Assumed Roles
+        Temporary credentials obtained by assuming an IAM role using
+        base credentials. Automatically refreshed before expiration.
+
+KEYRING STORAGE
+    Service: "awbus"
+    Username: "<profile-name>"
+    Password: JSON credential object
+
+    Static Credential JSON:
+    {
+      "Version": 1,
+      "AccessKeyId": "key",
+      "SecretAccessKey": "secret"
+    }
+
+    Assumed Role JSON:
+    {
+      "Version": 1,
+      "AccessKeyId": "key",
+      "SecretAccessKey": "secret",
+      "SessionToken": "session",
+      "Expiration": "2024-01-15T10:30:00Z",
+      "RoleArn": "arn:aws:iam::123456789012:role/MyRole",
+      "SourceProfile": "base",
+      "SessionTTL": "1h",
+      "SkewPad": "2m"
+    }
+
+AWS PROFILE CONFIGURATION
+    Add to ~/.aws/credentials:
+
+    [myprofile]
+    credential_process = /path/to/awbus
+
+WORKFLOW
+
+    1. Store credentials using 'awbus store' or 'awbus store-assume';
+    2. Optionally, verify that they are loaded (i.e. for Linux: `secret-tool search --all service awbus`);
+    2. Configure AWS profile with credential_process pointing to awbus;
+    3. Use AWS CLI/SDK normally - awbus handles credential retrieval;
+    4. For assumed roles, awbus automatically refreshes sessions before expiration.
+
+SECURITY
+    - Credentials encrypted in system keyring (GNOME Keyring, macOS Keychain, Windows Credential Manager)
+    - No plain text credential files
+    - Automatic session expiration
+    - No credential exposure in process lists
+    - No .aws/cli/cache/... temporary credentials on disk
+      (temporary credentials are also stored in system keyring)

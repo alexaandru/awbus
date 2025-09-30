@@ -1,0 +1,33 @@
+name: CI
+on:
+  push:
+jobs:
+  Test:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref_name }}-test
+      cancel-in-progress: true
+    timeout-minutes: 2
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "::notice title=Go Version::$(go version)"
+      # Needed until https://github.com/golang/go/issues/75031 is fixed.
+      - run: go env -w GOTOOLCHAIN=go1.25.0+auto
+      - run: make test
+  Lint:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.ref_name }}-lint
+      cancel-in-progress: true
+    timeout-minutes: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          key: golangci-lint-${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+      # Needed until https://github.com/golang/go/issues/75031 is fixed.
+      - run: go env -w GOTOOLCHAIN=go1.25.0+auto
+      - run: make lint
