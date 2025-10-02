@@ -85,6 +85,7 @@ func newApp(iamClient iamAPI) (a app, err error) {
 		return
 	}
 
+	a.iamAPI = iamClient
 	a.prompt = prompt
 	a.SessionTTL = cmp.Or(a.SessionTTL, defaultSessionTTL)
 	a.SkewPad = cmp.Or(a.SkewPad, defaultSkewPad)
@@ -94,18 +95,20 @@ func newApp(iamClient iamAPI) (a app, err error) {
 		return sts.New(sts.Options{Credentials: creds, Region: a.AWSRegion})
 	}
 
-	if iamClient != nil {
-		a.iamAPI = iamClient
-	} else {
-		var cfg aws.Config
+	return
+}
 
-		cfg, err = acfg.LoadDefaultConfig(context.Background(), acfg.WithRegion(a.AWSRegion))
-		if err != nil {
-			return
-		}
-
-		a.iamAPI = iam.NewFromConfig(cfg)
+func (a *app) ensureIAMClient(ctx context.Context) (err error) {
+	if a.iamAPI != nil {
+		return
 	}
+
+	cfg, err := acfg.LoadDefaultConfig(ctx, acfg.WithRegion(a.AWSRegion))
+	if err != nil {
+		return
+	}
+
+	a.iamAPI = iam.NewFromConfig(cfg)
 
 	return
 }
@@ -204,7 +207,7 @@ func (c *Creds) emitProfile() (err error) {
 	return err
 }
 
-func (a app) assumeRole(ctx context.Context, base, target Creds) (Creds, error) {
+func (a *app) assumeRole(ctx context.Context, base, target Creds) (Creds, error) {
 	static := aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
 		return aws.Credentials{
 			AccessKeyID:     base.AccessKeyID,
@@ -242,7 +245,7 @@ func (a app) assumeRole(ctx context.Context, base, target Creds) (Creds, error) 
 	return target, nil
 }
 
-func (a app) resolveAndMaybeRefresh(ctx context.Context, name string) (c Creds, err error) {
+func (a *app) resolveAndMaybeRefresh(ctx context.Context, name string) (c Creds, err error) {
 	if err = c.load(name); err != nil {
 		return
 	}
@@ -293,7 +296,11 @@ func (a app) resolveAndMaybeRefresh(ctx context.Context, name string) (c Creds, 
 	return refreshed, nil
 }
 
-func (a app) rotateCredentials(ctx context.Context, profileName string) (err error) {
+func (a *app) rotateCredentials(ctx context.Context, profileName string) (err error) {
+	if err = a.ensureIAMClient(ctx); err != nil {
+		return fmt.Errorf("initialize IAM client: %w", err)
+	}
+
 	var c Creds
 
 	if err = c.load(profileName); err != nil {
@@ -331,7 +338,8 @@ func (a app) rotateCredentials(ctx context.Context, profileName string) (err err
 	return err
 }
 
-func (a app) run(ctx context.Context, args []string) (err error) {
+//nolint:gocognit,cyclop,funlen,nakedret // ok
+func (a *app) run(ctx context.Context, args []string) (err error) {
 	cmd := "load"
 	if len(args) > 1 {
 		cmd = args[1]
@@ -385,6 +393,55 @@ func (a app) run(ctx context.Context, args []string) (err error) {
 		}
 	case "version":
 		fmt.Println(keyringService, version)
+	case "get":
+		if len(args) < 4 { //nolint:mnd // ok
+			err = errors.New("get command requires service and username arguments")
+			break
+		}
+
+		var out string
+
+		out, err = keyring.Get(args[2], args[3])
+		if err != nil {
+			break
+		}
+
+		fmt.Println(out)
+	case "put":
+		var service, username, secret string
+
+		if len(args) >= 3 { //nolint:mnd // ok
+			service = args[2]
+		}
+
+		if len(args) >= 4 { //nolint:mnd // ok
+			username = args[3]
+		}
+
+		var (
+			stat  os.FileInfo
+			input []byte
+		)
+
+		if stat, err = os.Stdin.Stat(); err == nil && (stat.Mode()&os.ModeCharDevice) == 0 {
+			if input, err = os.ReadFile("/dev/stdin"); err == nil {
+				secret = string(input)
+			}
+		}
+
+		if err = a.promptIfEmpty("Service", &service); err != nil {
+			break
+		}
+
+		if err = a.promptIfEmpty("Username", &username); err != nil {
+			break
+		}
+
+		if err = a.promptIfEmpty("Secret", &secret); err != nil {
+			break
+		}
+
+		err = keyring.Set(service, username, secret)
 	case "help":
 		fmt.Println(help)
 	default:
@@ -399,6 +456,14 @@ func prompt(label string, val *string) (err error) {
 
 	if _, err = fmt.Scanln(val); err != nil {
 		return fmt.Errorf("read %s: %w", label, err)
+	}
+
+	return
+}
+
+func (a *app) promptIfEmpty(label string, val *string) (err error) {
+	if *val == "" {
+		return a.prompt(label, val)
 	}
 
 	return

@@ -21,6 +21,8 @@ COMMANDS
     store-assume      Store assumed role configuration (interactive)
     rotate            Rotate static credentials (create new, delete old)
     delete            Delete profile from keyring (interactive)
+    get               Get arbitrary secret from keyring: awbus get <service> <username>
+    put               Store arbitrary secret in keyring: awbus put [service] [username]
     version           Show version
     help              Show this help message
 
@@ -69,9 +71,22 @@ WORKFLOW
 
     1. Store credentials using 'awbus store' or 'awbus store-assume';
     2. Optionally, verify that they are loaded (i.e. for Linux: `secret-tool search --all service awbus`);
-    2. Configure AWS profile with credential_process pointing to awbus;
-    3. Use AWS CLI/SDK normally - awbus handles credential retrieval;
-    4. For assumed roles, awbus automatically refreshes sessions before expiration.
+    3. Configure AWS profile with credential_process pointing to awbus;
+    4. Use AWS CLI/SDK normally - awbus handles credential retrieval;
+    5. For assumed roles, awbus automatically refreshes sessions before expiration.
+
+GENERIC KEYRING COMMANDS
+
+    get <service> <username>    Retrieve any secret from keyring
+    put [service] [username]    Store any secret in keyring
+                               - Service and username can be provided as arguments
+                               - Secret read from stdin (secure) or prompted interactively
+                               - Missing service/username will be prompted
+
+    Examples:
+        awbus put myapp myuser                    # Prompts for secret
+        echo "secret" | awbus put myapp myuser    # Secret from stdin (secure)
+        awbus put                                 # Prompts for all values
 
 SECURITY
     - Credentials encrypted in system keyring (GNOME Keyring, macOS Keychain, Windows Credential Manager)

@@ -7,7 +7,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/alexaandru/awbus.svg)](https://pkg.go.dev/github.com/alexaandru/awbus)
 [![Socket.dev](https://socket.dev/api/badge/go/package/github.com/alexaandru/awbus)](https://socket.dev/go/package/github.com/alexaandru/awbus)
 
-AWS credential_process helper using system keyring with secure storage and automatic credential management.
+AWS credential_process helper using system keyring with secure storage, automatic credential management, and generic keyring operations.
 
 ## 📋 Overview
 
@@ -18,6 +18,7 @@ AWS credential_process helper using system keyring with secure storage and autom
 - **Smart caching** - Automatically refreshes session credentials before expiration
 - **Zero configuration** - Works seamlessly with existing AWS CLI profiles
 - **Profile management** - Store, delete, and manage multiple AWS profiles
+- **Generic keyring operations** - Store and retrieve arbitrary secrets securely
 - **Security-first** - No credentials stored in plain text or process environment
 
 ## 📦 Installation
@@ -38,13 +39,13 @@ awbus operation is controlled by these environment variables:
 ## 🚀 Usage
 
 1. Store credentials: `awbus store` or `awbus store-assume`
-1. Optionally, verify that they are loaded (i.e. for Linux: `secret-tool search --all service awbus`);
-1. Configure AWS profile in `~/.aws/credentials` and replace harcoded credentials with:
+2. Optionally, verify that they are loaded (i.e. for Linux: `secret-tool search --all service awbus`)
+3. Configure AWS profile in `~/.aws/credentials` and replace hardcoded credentials with:
    ```toml
    [myprofile]
    credential_process = /path/to/awbus
    ```
-1. Use AWS CLI/SDK (incl. Terraform, anything that knows how to use AWS profiles) normally - `awbus` handles credential retrieval.
+4. Use AWS CLI/SDK (incl. Terraform, anything that knows how to use AWS profiles) normally - `awbus` handles credential retrieval
 
 ## ⚡ Commands
 
@@ -55,12 +56,30 @@ awbus operation is controlled by these environment variables:
 | `store-assume`   | 🎭 Store assumed role configuration (interactive)             |
 | `rotate`         | 🔄 Rotate static credentials (create new, delete old)         |
 | `delete`         | 🗑️ Delete profile from keyring (interactive)                  |
+| `get`            | 🔍 Get arbitrary secret: `awbus get <service> <username>`     |
+| `put`            | 💾 Store arbitrary secret: `awbus put [service] [username]`   |
 | `version`        | ℹ️ Show version                                               |
 | `help`           | ❓ Show detailed help                                         |
 
-## 📋 Requirements
+## 🔐 Generic Keyring Operations
 
-System keyring support: Linux (Secret Service/D-Bus), macOS (Keychain), Windows (Credential Manager)
+Beyond AWS credentials, `awbus` can store and retrieve arbitrary secrets:
+
+```bash
+# Store a secret (prompts for secret securely)
+awbus put myapp myuser
+
+# Store a secret with stdin (secure - no command line exposure)
+echo "my-secret-token" | awbus put myapp myuser
+
+# Retrieve a secret
+awbus get myapp myuser
+
+# Interactive mode (prompts for all missing values)
+awbus put
+```
+
+**Security Note**: Secrets are never accepted as command line arguments to prevent exposure in shell history or process lists. Use stdin piping or interactive prompts only.
 
 ## 📄 License
 

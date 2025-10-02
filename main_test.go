@@ -1195,6 +1195,69 @@ func TestAppRun(t *testing.T) { //nolint:funlen // ok
 				config: config{AWSProfile: "abort-delete"},
 			},
 		},
+		{
+			name: "get command success",
+			args: []string{"awbus", "get", "testservice", "testuser"},
+			setupFn: func() {
+				keyring.Set("testservice", "testuser", "secret-value") //nolint:errcheck,gosec // ok
+			},
+			app: app{},
+		},
+		{
+			name:    "get command missing args",
+			args:    []string{"awbus", "get", "testservice"},
+			setupFn: func() {},
+			app:     app{},
+			wantErr: true,
+		},
+		{
+			name:    "get command nonexistent",
+			args:    []string{"awbus", "get", "nonexistent", "user"},
+			setupFn: func() {},
+			app:     app{},
+			wantErr: true,
+		},
+		{
+			name:    "put command with args",
+			args:    []string{"awbus", "put", "myservice", "myuser"},
+			setupFn: func() {},
+			mockPrompt: func(label string, val *string) error {
+				if label == "Secret" {
+					*val = "my-secret"
+				}
+
+				return nil
+			},
+			app: app{},
+		},
+		{
+			name:    "put command no args",
+			args:    []string{"awbus", "put"},
+			setupFn: func() {},
+			mockPrompt: func(label string, val *string) error {
+				switch label {
+				case "Service":
+					*val = "newservice"
+				case "Username":
+					*val = "newuser"
+				case "Secret":
+					*val = "newsecret"
+				}
+
+				return nil
+			},
+			app: app{},
+		},
+		{
+			name:    "put command prompt error",
+			args:    []string{"awbus", "put"},
+			setupFn: func() {},
+			mockPrompt: func(label string, val *string) error {
+				return errors.New("prompt failed")
+			},
+			app:     app{},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {
@@ -1264,6 +1327,103 @@ func TestDie(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			die(tt.msg, tt.err)
+		})
+	}
+}
+
+func TestPromptIfEmpty(t *testing.T) {
+	tests := []struct { //nolint:govet // ok
+		name      string
+		label     string
+		initial   string
+		expected  string
+		promptErr error
+		wantErr   bool
+	}{
+		{
+			name:     "non-empty value not prompted",
+			label:    "Test",
+			initial:  "existing",
+			expected: "existing",
+		},
+		{
+			name:     "empty value gets prompted",
+			label:    "Test",
+			initial:  "",
+			expected: "prompted-value",
+		},
+		{
+			name:      "prompt error propagated",
+			label:     "Test",
+			initial:   "",
+			promptErr: errors.New("prompt failed"),
+			wantErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &app{
+				prompt: func(label string, val *string) error {
+					if tt.promptErr != nil {
+						return tt.promptErr
+					}
+
+					*val = "prompted-value"
+
+					return nil
+				},
+			}
+
+			val := tt.initial
+			err := a.promptIfEmpty(tt.label, &val)
+
+			if (err != nil) != tt.wantErr {
+				t.Errorf("promptIfEmpty() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			if !tt.wantErr && val != tt.expected {
+				t.Errorf("promptIfEmpty() val = %v, expected %v", val, tt.expected)
+			}
+		})
+	}
+}
+
+func TestEnsureIAMClient(t *testing.T) {
+	tests := []struct { //nolint:govet // ok
+		name        string
+		existingIAM iamAPI
+		wantErr     bool
+	}{
+		{
+			name:        "client already exists",
+			existingIAM: &mockIAMClient{},
+		},
+		{
+			name:        "client needs initialization",
+			existingIAM: nil,
+			wantErr:     false, // Won't fail in test env - AWS config loading might succeed
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a := &app{
+				config: config{
+					AWSRegion: "us-east-1",
+				},
+				iamAPI: tt.existingIAM,
+			}
+
+			err := a.ensureIAMClient(t.Context())
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ensureIAMClient() error = %v, wantErr %v", err, tt.wantErr)
+			}
+
+			if tt.existingIAM != nil && a.iamAPI != tt.existingIAM {
+				t.Error("ensureIAMClient() should not replace existing client")
+			}
 		})
 	}
 }
