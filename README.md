@@ -3,7 +3,7 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Test](https://github.com/alexaandru/awbus/actions/workflows/ci.yml/badge.svg)](https://github.com/alexaandru/awbus/actions/workflows/ci.yml)
 ![Coverage](coverage-badge.svg)
-[![Go Report Card](https://goreportcard.com/badge/github.com/alexaandru/awbus)](https://goreportcard.com/report/github.com/alexaandru/awbus)
+[![Go Report Card](https://goreportcard.com/badge/github.com/alexaandru/awbus?nocache=1)](https://goreportcard.com/report/github.com/alexaandru/awbus?nocache=1)
 [![Go Reference](https://pkg.go.dev/badge/github.com/alexaandru/awbus.svg)](https://pkg.go.dev/github.com/alexaandru/awbus)
 [![Socket.dev](https://socket.dev/api/badge/go/package/github.com/alexaandru/awbus)](https://socket.dev/go/package/github.com/alexaandru/awbus)
 

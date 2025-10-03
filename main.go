@@ -68,8 +68,8 @@ type config struct {
 const (
 	keyringService       = "awbus"
 	defaultRegion        = "us-east-1"
-	defaultSkewPad       = 120 * time.Second
-	defaultSessionTTL    = 3600 * time.Second
+	defaultSkewPad       = 2 * time.Minute
+	defaultSessionTTL    = time.Hour
 	minAllowedSessionTTL = 15 * time.Minute
 	maxAllowedSessionTTL = 12 * time.Hour
 	defaultProfileName   = "default"
