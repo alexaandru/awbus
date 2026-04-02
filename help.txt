@@ -2,21 +2,22 @@ awbus - AWS credential_process helper using system keyring
 
 DESCRIPTION
     awbus securely stores AWS credentials in your system keyring and provides
-    them to AWS CLI/SDK via the credential_process interface. It supports both
-    static credentials and assumed roles with automatic session refresh.
+    them to AWS CLI/SDK via the credential_process interface. It supports
+    static credentials, assumed roles with automatic session refresh, and
+    generic keyring operations for storing arbitrary secrets.
     It is OS independent, it supports all platforms supported by https://github.com/zalando/go-keyring
 
 USAGE
     awbus [-profile <name>] [command]
 
-FLAGS
-    -profile <name>    Override profile name (overrides AWS_PROFILE)
-
 ENVIRONMENT VARIABLES
-    AWS_PROFILE     Profile name (default: "default")
-    AWS_REGION      AWS region for STS operations (default: "us-east-1")
-    SKEW_PAD        Refresh window before expiration (default: "120s")
-    SESSION_TTL     AssumeRole session duration (default: "1h")
+    AWS_PROFILE       Profile name (default: "default")
+    AWS_REGION        AWS region for STS operations (default: "us-east-1")
+    SKEW_PAD          Refresh window before expiration (default: "120s")
+    SESSION_TTL       AssumeRole session duration (default: "1h")
+
+FLAGS
+    -profile <name>   Override profile name (overrides AWS_PROFILE)
 
 COMMANDS
     load (default)    Load and return credentials for current profile
@@ -31,13 +32,17 @@ COMMANDS
 
 CREDENTIAL TYPES
 
-    Static Credentials
+    Static AWS Credentials
         Direct AWS access keys stored in keyring. Suitable for IAM users
         with long-term access keys.
 
-    Assumed Roles
-        Temporary credentials obtained by assuming an IAM role using
+    Assumed AWS Roles
+        Temporary AWS credentials obtained by assuming an IAM role using
         base credentials. Automatically refreshed before expiration.
+
+    Generic Secrets
+        Arbitrary key-value secrets stored in keyring via put/get commands.
+        Useful for SSH keys, API tokens, database URLs, etc.
 
 KEYRING STORAGE
     Service: "awbus"
@@ -90,11 +95,6 @@ GENERIC KEYRING COMMANDS
         awbus put myapp myuser                    # Prompts for secret
         get_my_secret.sh | awbus put myapp myuser # Secret from stdin (secure)
         awbus put                                 # Prompts for all values
-
-PROFILE OVERRIDE EXAMPLES
-    awbus -profile myprofile                     # Load credentials for 'myprofile'
-    awbus -profile=myprofile load                # Same as above
-    awbus -profile myprofile store               # Store credentials for 'myprofile'
 
 SECURITY
     - Credentials encrypted in system keyring (GNOME Keyring, macOS Keychain, Windows Credential Manager)
