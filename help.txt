@@ -88,7 +88,7 @@ GENERIC KEYRING COMMANDS
 
     Examples:
         awbus put myapp myuser                    # Prompts for secret
-        echo "secret" | awbus put myapp myuser    # Secret from stdin (secure)
+        get_my_secret.sh | awbus put myapp myuser # Secret from stdin (secure)
         awbus put                                 # Prompts for all values
 
 PROFILE OVERRIDE EXAMPLES

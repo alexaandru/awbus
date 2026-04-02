@@ -7,7 +7,8 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/alexaandru/awbus.svg)](https://pkg.go.dev/github.com/alexaandru/awbus)
 [![Socket.dev](https://socket.dev/api/badge/go/package/github.com/alexaandru/awbus)](https://socket.dev/go/package/github.com/alexaandru/awbus)
 
-AWS credential_process helper using system keyring with secure storage, automatic credential management, and generic keyring operations.
+AWS [credential_process](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external.html)
+helper using system keyring with secure storage, automatic credential management, and generic keyring operations.
 
 ## 📋 Overview
 
@@ -17,15 +18,19 @@ AWS credential_process helper using system keyring with secure storage, automati
 - **Multiple credential types** - Static credentials and assumed roles with automatic refresh
 - **Smart caching** - Automatically refreshes session credentials before expiration
 - **Zero configuration** - Works seamlessly with existing AWS CLI profiles
+  (i.e. aws cli, terraform apply, code that uses AWS SDK should all work unmodified)
 - **Profile management** - Store, delete, and manage multiple AWS profiles
 - **Generic keyring operations** - Store and retrieve arbitrary secrets securely
-- **Security-first** - No credentials stored in plain text or process environment
 
 ## 📦 Installation
 
 ```bash
 go install github.com/alexaandru/awbus@latest
 ```
+
+## 🚩 Flags
+
+- `-profile <name>` - Override profile name (takes precedence over `AWS_PROFILE`)
 
 ## 🌍 Environment Variables
 
@@ -70,7 +75,7 @@ Beyond AWS credentials, `awbus` can store and retrieve arbitrary secrets:
 awbus put myapp myuser
 
 # Store a secret with stdin (secure - no command line exposure)
-echo "my-secret-token" | awbus put myapp myuser
+get_my_secret.sh | awbus put myapp myuser
 
 # Retrieve a secret
 awbus get myapp myuser
@@ -79,7 +84,8 @@ awbus get myapp myuser
 awbus put
 ```
 
-**Security Note**: Secrets are never accepted as command line arguments to prevent exposure in shell history or process lists. Use stdin piping or interactive prompts only.
+**Security Note**: Secrets are never accepted as command line arguments to prevent exposure in shell history or process lists.
+Use stdin piping (**NOT echo**, that will leave the secret in history) or interactive prompts only.
 
 ## 📄 License
 
