@@ -25,7 +25,7 @@ helper using system keyring with secure storage, automatic credential management
 ## 📦 Installation
 
 ```bash
-go install github.com/alexaandru/awbus@latest
+GOEXPERIMENT=jsonv2 go install github.com/alexaandru/awbus@latest
 ```
 
 ## 🚩 Flags
