@@ -10,6 +10,24 @@ test:
 	@go tool cover -func=unit.cov|tail -n1
 	@go tool -modfile=tools/go.mod stampli -quiet -coverage=$$(go tool cover -func=unit.cov|tail -n1|tr -s "\t"|cut -f3|tr -d "%")
 
+vet:
+	@go vet -all ./...
+
+fix:
+	@go run fix ./...
+
+update: update-go
+	@unset GOFIPS140; go get -u ./...
+	@go mod tidy
+	@go generate ./...
+	@unset GOFIPS140; (cd tools && go get tool && go mod tidy)
+
+update-go:
+	@LATEST=$$(go tool -modfile tools/go.mod eol latest go -t '{{.latest.name}}'); \
+	  for i in $$(find . -name 'go.mod'); do \
+	    go mod edit -go=$$LATEST -modfile=$$i; \
+	  done
+
 unit.cov: test
 
 lint:

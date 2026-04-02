@@ -1283,30 +1283,6 @@ func TestAppRun(t *testing.T) { //nolint:funlen // ok
 	}
 }
 
-func TestP(t *testing.T) {
-	tests := []struct {
-		value any
-		name  string
-	}{
-		{name: "string", value: "test"},
-		{name: "int", value: 42},
-		{name: "bool", value: true},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			ptr := p(tt.value)
-			if ptr == nil {
-				t.Fatal("p() returned nil")
-			}
-
-			if *ptr != tt.value {
-				t.Errorf("*p() = %v, want %v", *ptr, tt.value)
-			}
-		})
-	}
-}
-
 func TestMain(t *testing.T) {
 	t.Skip("Cannot easily test main() without complex mocking of os.Exit and newApp")
 }

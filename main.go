@@ -219,8 +219,8 @@ func (a *app) assumeRole(ctx context.Context, base, target Creds) (Creds, error)
 	svc := a.mkSTSClient(static)
 	input := &sts.AssumeRoleInput{
 		RoleArn:         &target.RoleArn,
-		RoleSessionName: p(keyringService + "-" + target.SourceProfile),
-		DurationSeconds: p(int32(target.SessionTTL.Seconds())),
+		RoleSessionName: new(keyringService + "-" + target.SourceProfile),
+		DurationSeconds: new(int32(target.SessionTTL.Seconds())),
 	}
 
 	out, err := svc.AssumeRole(ctx, input)
@@ -490,10 +490,6 @@ func (a *app) promptIfEmpty(label string, val *string) (err error) {
 	}
 
 	return
-}
-
-func p[T any](v T) *T {
-	return &v
 }
 
 func die(msg string, err error) {
