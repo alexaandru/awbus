@@ -338,11 +338,34 @@ func (a *app) rotateCredentials(ctx context.Context, profileName string) (err er
 	return err
 }
 
-//nolint:gocognit,cyclop,funlen,nakedret // ok
+//nolint:gocognit,cyclop,funlen,nakedret,gocyclo // ok
 func (a *app) run(ctx context.Context, args []string) (err error) {
+	// Parse flags and extract remaining args.
+	var profileOverride string
+
+	filteredArgs := []string{args[0]} // Keep program name.
+
+	for i := 1; i < len(args); i++ {
+		arg := args[i]
+		switch {
+		case arg == "-profile" && i+1 < len(args):
+			profileOverride = args[i+1]
+			i++ // Skip the next arg (profile value).
+		case len(arg) > 9 && arg[:9] == "-profile=":
+			profileOverride = arg[9:]
+		default:
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+
+	// Override profile if specified.
+	if profileOverride != "" {
+		a.AWSProfile = profileOverride
+	}
+
 	cmd := "load"
-	if len(args) > 1 {
-		cmd = args[1]
+	if len(filteredArgs) > 1 {
+		cmd = filteredArgs[1]
 	}
 
 	switch cmd {
@@ -394,14 +417,14 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 	case "version":
 		fmt.Println(keyringService, version)
 	case "get":
-		if len(args) < 4 { //nolint:mnd // ok
+		if len(filteredArgs) < 4 { //nolint:mnd // ok
 			err = errors.New("get command requires service and username arguments")
 			break
 		}
 
 		var out string
 
-		out, err = keyring.Get(args[2], args[3])
+		out, err = keyring.Get(filteredArgs[2], filteredArgs[3])
 		if err != nil {
 			break
 		}
@@ -410,12 +433,12 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 	case "put":
 		var service, username, secret string
 
-		if len(args) >= 3 { //nolint:mnd // ok
-			service = args[2]
+		if len(filteredArgs) >= 3 { //nolint:mnd // ok
+			service = filteredArgs[2]
 		}
 
-		if len(args) >= 4 { //nolint:mnd // ok
-			username = args[3]
+		if len(filteredArgs) >= 4 { //nolint:mnd // ok
+			username = filteredArgs[3]
 		}
 
 		var (

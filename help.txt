@@ -7,7 +7,10 @@ DESCRIPTION
     It is OS independent, it supports all platforms supported by https://github.com/zalando/go-keyring
 
 USAGE
-    awbus [command]
+    awbus [-profile <name>] [command]
+
+FLAGS
+    -profile <name>    Override profile name (overrides AWS_PROFILE)
 
 ENVIRONMENT VARIABLES
     AWS_PROFILE     Profile name (default: "default")
@@ -87,6 +90,11 @@ GENERIC KEYRING COMMANDS
         awbus put myapp myuser                    # Prompts for secret
         echo "secret" | awbus put myapp myuser    # Secret from stdin (secure)
         awbus put                                 # Prompts for all values
+
+PROFILE OVERRIDE EXAMPLES
+    awbus -profile myprofile                     # Load credentials for 'myprofile'
+    awbus -profile=myprofile load                # Same as above
+    awbus -profile myprofile store               # Store credentials for 'myprofile'
 
 SECURITY
     - Credentials encrypted in system keyring (GNOME Keyring, macOS Keychain, Windows Credential Manager)

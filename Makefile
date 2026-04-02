@@ -2,6 +2,9 @@ export GOEXPERIMENT=jsonv2
 
 all: fmt lint actionlint vulncheck deadcode test
 
+install:
+	@go install
+
 test:
 	@go test -race -vet all -coverprofile=unit.cov -covermode=atomic -race -count=5 $(OPTS) ./...
 	@go tool cover -func=unit.cov|tail -n1
