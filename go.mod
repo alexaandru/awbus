@@ -3,7 +3,7 @@ module github.com/alexaandru/awbus
 go 1.26.1
 
 require (
-	github.com/alexaandru/confetti v1.3.0
+	github.com/alexaandru/confetti v1.5.1
 	github.com/aws/aws-sdk-go-v2 v1.41.5
 	github.com/aws/aws-sdk-go-v2/config v1.32.13
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.7
