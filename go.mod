@@ -2,6 +2,9 @@ module github.com/alexaandru/awbus
 
 go 1.27.1
 
+// Creds.load fails on any profile with a text-form SessionTTL/SkewPad (e.g. "1h0m0s", the format every profile written before this used).
+retract v1.3.0
+
 require (
 	github.com/alexaandru/confetti v1.6.2
 	github.com/aws/aws-sdk-go-v2 v1.46.0

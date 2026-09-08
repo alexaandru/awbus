@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"os"
 	"runtime/debug"
+	"strconv"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -111,6 +112,21 @@ var help string
 
 var version string
 
+var durationToJS = json.MarshalFunc(func(d time.Duration) ([]byte, error) { //nolint:gochecknoglobals // ok
+	return []byte(strconv.Quote(d.String())), nil
+})
+
+var durationFromJS = json.UnmarshalFunc(func(data []byte, d *time.Duration) (err error) { //nolint:gochecknoglobals,lll // ok
+	s, err := strconv.Unquote(string(data))
+	if err != nil {
+		return
+	}
+
+	*d, err = time.ParseDuration(s)
+
+	return
+})
+
 func newApp(iamClient iamAPI) (a app, err error) {
 	if err = confetti.Load(&a.config, confetti.WithEnv("")); err != nil {
 		return
@@ -169,13 +185,13 @@ func (c *Creds) load(name string) (err error) {
 		return fmt.Errorf("profile %q empty JSON", name)
 	}
 
-	return json.Unmarshal([]byte(raw), c)
+	return json.Unmarshal([]byte(raw), c, json.WithUnmarshalers(durationFromJS))
 }
 
 func (c *Creds) store(name string) (err error) {
 	c.Version = 1
 
-	b, err := json.Marshal(*c)
+	b, err := json.Marshal(*c, json.WithMarshalers(durationToJS))
 	if err != nil {
 		return
 	}
