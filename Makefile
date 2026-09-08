@@ -1,5 +1,3 @@
-export GOEXPERIMENT=jsonv2
-
 all: fmt lint actionlint vulncheck deadcode test
 
 install:

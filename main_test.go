@@ -1385,12 +1385,7 @@ func TestEnsureIAMClient(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := &app{
-				config: config{
-					AWSRegion: "us-east-1",
-				},
-				iamAPI: tt.existingIAM,
-			}
+			a := &app{AWSRegion: "us-east-1", iamAPI: tt.existingIAM}
 
 			err := a.ensureIAMClient(t.Context())
 			if (err != nil) != tt.wantErr {

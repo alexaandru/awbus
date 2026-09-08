@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v6
       - run: echo "::notice title=Go Version::$(go version)"
       # Needed until https://github.com/golang/go/issues/75031 is fixed.
-      - run: go env -w GOTOOLCHAIN=go1.26.1+auto
+      - run: go env -w GOTOOLCHAIN=go1.27.1+auto
       - run: make test
   Lint:
     runs-on: ubuntu-latest
@@ -29,5 +29,5 @@ jobs:
             ~/.cache/go-build
             ~/go/pkg/mod
       # Needed until https://github.com/golang/go/issues/75031 is fixed.
-      - run: go env -w GOTOOLCHAIN=go1.26.1+auto
+      - run: go env -w GOTOOLCHAIN=go1.27.1+auto
       - run: make lint

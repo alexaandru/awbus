@@ -27,7 +27,7 @@ and provides them via the AWS `credential_process` interface. Features:
 ## 📦 Installation
 
 ```bash
-GOEXPERIMENT=jsonv2 go install github.com/alexaandru/awbus@latest
+go install github.com/alexaandru/awbus@latest
 ```
 
 That will place the binary under `$(go env GOPATH)/bin` folder. You can either

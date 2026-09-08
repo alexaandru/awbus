@@ -34,8 +34,8 @@ type Creds struct { //nolint:govet // ok//nolint:govet // ok
 	RoleArn       string `json:"RoleArn,omitempty"`
 	SourceProfile string `json:"SourceProfile,omitempty"`
 
-	SessionTTL time.Duration `json:"SessionTTL,omitzero,format:units"` //nolint:tagliatelle // ok
-	SkewPad    time.Duration `json:"SkewPad,omitzero,format:units"`
+	SessionTTL time.Duration `json:"SessionTTL,omitzero"` //nolint:tagliatelle // ok
+	SkewPad    time.Duration `json:"SkewPad,omitzero"`
 }
 
 type app struct { //nolint:govet // ok

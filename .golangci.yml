@@ -6,7 +6,9 @@ linters:
     # - embeddedstructfieldcheck
     - err113 # TODO
     - exhaustruct
+    - exhaustruct_v5
     # - godox
+    - gomodguard # deprecated
     - noinlineerr # we want inline errs, why not?
     - nonamedreturns # we want named returns
     - paralleltest # Lots of t.Tempdir, t.Setenv, can't use it
@@ -200,6 +202,7 @@ linters:
     rules:
       - linters:
           - err113
+          - goconst
           - godot
         path: _test\.go
       - linters:
