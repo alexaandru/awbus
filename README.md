@@ -18,6 +18,8 @@ and provides them via the AWS `credential_process` interface. Features:
 - **Multiple credential types**:
   - static AWS credentials (for a profile)
   - assumed AWS roles (with automatic refresh)
+  - presigned STS `GetCallerIdentity` URLs, cached and auto-refreshed, for services
+    authenticating via AWS IAM identity (`Authorization: IAM <url>`)
   - generic keyring operations: store and retrieve arbitrary secrets securely
 - **Smart caching** - Automatically refreshes AWS session credentials before expiration
 - **Zero configuration** - Works seamlessly with existing AWS CLI profiles
@@ -52,6 +54,7 @@ Commands:
 | Command          | Description                                                   |
 | ---------------- | ------------------------------------------------------------- |
 | `load` (default) | 🔐 Load+display credentials for current (AWS_PROFILE) profile |
+| `sts-url`        | 🔏 Cached, auto-refreshed presigned STS `GetCallerIdentity` URL |
 | `store`          | 💾 Store static AWS credentials (interactive)                 |
 | `store-assume`   | 🎭 Store assumed role configuration (interactive)             |
 | `rotate`         | 🔄 Rotate static credentials (create new, delete old)         |
@@ -95,6 +98,16 @@ Use stdin piping (**NOT echo**, that will leave the secret in history) or intera
    ```
 
 4. Use AWS CLI/SDK (incl. Terraform, anything that knows how to use AWS profiles) normally - `awbus` handles credential retrieval
+
+### Presigned STS URLs (IAM auth)
+
+For services that authenticate callers via AWS IAM identity rather than a static API key
+(presigned `sts:GetCallerIdentity`, e.g. `Authorization: IAM <url>`), `sts-url` hands you one
+ready to use - cached and refreshed automatically, so it's safe to call on every request:
+
+```bash
+curl -H "Authorization: IAM $(awbus -profile myprofile sts-url)" https://api.your-service.com/
+```
 
 ### SSH Keys
 

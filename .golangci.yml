@@ -204,6 +204,7 @@ linters:
           - err113
           - goconst
           - godot
+          - lll
         path: _test\.go
       - linters:
           - forbidigo
@@ -217,9 +218,15 @@ issues:
 formatters:
   enable:
     - gofmt
+    - gofumpt
     - goimports
   settings:
     gofmt:
       simplify: true
+    gofumpt:
+      extra:
+        group-params: true
+        clothe-returns: false
+        balance-calls: true
 output:
   show-stats: true

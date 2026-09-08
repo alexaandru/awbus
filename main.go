@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	acfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -42,13 +43,19 @@ type app struct { //nolint:govet // ok
 	config
 	iamAPI
 
-	prompt      func(label string, val *string) error
-	mkSTSClient func(aws.CredentialsProvider) stsAPI
+	prompt          func(label string, val *string) error
+	mkSTSClient     func(aws.CredentialsProvider) stsAPI
+	mkPresignClient func(aws.CredentialsProvider) stsPresignAPI
 }
 
 //nolint:inamedparam // ok
 type stsAPI interface {
 	AssumeRole(context.Context, *sts.AssumeRoleInput, ...func(*sts.Options)) (*sts.AssumeRoleOutput, error)
+}
+
+//nolint:inamedparam,lll // ok
+type stsPresignAPI interface {
+	PresignGetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.PresignOptions)) (*v4.PresignedHTTPRequest, error)
 }
 
 //nolint:inamedparam // ok
@@ -67,12 +74,36 @@ type config struct {
 
 const (
 	keyringService       = "awbus"
+	stsURLKeyringService = "awbus-sts-url"
 	defaultRegion        = "us-east-1"
 	defaultSkewPad       = 2 * time.Minute
 	defaultSessionTTL    = time.Hour
 	minAllowedSessionTTL = 15 * time.Minute
 	maxAllowedSessionTTL = 12 * time.Hour
 	defaultProfileName   = "default"
+
+	// The SDK's STS presign client never sets X-Amz-Expires, so its URLs run on
+	// SigV4's "implicit" validity window rather than an explicit one. AWS's own
+	// docs say that window is real but deliberately unpublished and not meant to
+	// be depended on:
+	//
+	//   "IAM manages the implicit validity periods of signatures that don't have
+	//   an explicit expiration time. Those implicit periods aren't published.
+	//   They don't typically change, but they are managed with security in mind,
+	//   so you shouldn't take a dependency on the validity periods."
+	//   - https://docs.aws.amazon.com/prescriptive-guidance/latest/presigned-url-best-practices/overview.html
+	//
+	// So there is no constant to cite for "15 minutes" - not in the SDK, not in
+	// AWS docs. What we have instead: live STS rejects a GetCallerIdentity
+	// presigned URL at the 15-minute mark with SignatureDoesNotMatch ("Signature
+	// expired: <ts> is now earlier than <now> - 15 min."), matching the error
+	// format AWS does document (reference_sigv-troubleshooting.html), and others
+	// have independently hit the same 15-minute wall:
+	// https://github.com/aws/aws-sdk-go/issues/2167
+	//
+	// Treat this as a conservative estimate to refresh ahead of (via SkewPad),
+	// not a guaranteed contract - AWS explicitly reserves the right to change it.
+	stsURLAssumedTTL = 15 * time.Minute
 )
 
 //go:embed help.txt
@@ -93,6 +124,9 @@ func newApp(iamClient iamAPI) (a app, err error) {
 	a.AWSRegion = cmp.Or(a.AWSRegion, defaultRegion)
 	a.mkSTSClient = func(creds aws.CredentialsProvider) stsAPI {
 		return sts.New(sts.Options{Credentials: creds, Region: a.AWSRegion})
+	}
+	a.mkPresignClient = func(creds aws.CredentialsProvider) stsPresignAPI {
+		return sts.NewPresignClient(sts.New(sts.Options{Credentials: creds, Region: a.AWSRegion}))
 	}
 
 	return
@@ -128,7 +162,7 @@ func krDel(profile string) error {
 func (c *Creds) load(name string) (err error) {
 	raw, err := krGet(name)
 	if err != nil {
-		return err
+		return
 	}
 
 	if raw == "" {
@@ -143,7 +177,7 @@ func (c *Creds) store(name string) (err error) {
 
 	b, err := json.Marshal(*c)
 	if err != nil {
-		return err
+		return
 	}
 
 	return krSet(name, string(b))
@@ -153,7 +187,8 @@ func (c *Creds) applyDefaults(cfg config) {
 	c.SkewPad = cmp.Or(c.SkewPad, cfg.SkewPad)
 	c.SessionTTL = min(
 		max(cmp.Or(c.SessionTTL, cfg.SessionTTL), minAllowedSessionTTL),
-		maxAllowedSessionTTL)
+		maxAllowedSessionTTL,
+	)
 }
 
 func (c *Creds) isStatic() bool {
@@ -173,7 +208,7 @@ func (c *Creds) validateStatic() (err error) {
 		return errors.New("static profile must not have Expiration")
 	}
 
-	return err
+	return
 }
 
 func (c *Creds) credsFresh(now time.Time) bool {
@@ -199,24 +234,29 @@ func (c *Creds) emitProfile() (err error) {
 
 	b, err := json.Marshal(ep)
 	if err != nil {
-		return err
+		return
 	}
 
 	fmt.Println(string(b))
 
-	return err
+	return
+}
+
+// credsProvider adapts a resolved Creds into an aws.CredentialsProvider, for
+// building an SDK client (STS AssumeRole, STS presign, etc.) out of it.
+func credsProvider(c Creds) aws.CredentialsProviderFunc {
+	return func(context.Context) (aws.Credentials, error) {
+		return aws.Credentials{
+			AccessKeyID:     c.AccessKeyID,
+			SecretAccessKey: c.SecretAccessKey,
+			SessionToken:    c.SessionToken,
+			Source:          keyringService,
+		}, nil
+	}
 }
 
 func (a *app) assumeRole(ctx context.Context, base, target Creds) (Creds, error) {
-	static := aws.CredentialsProviderFunc(func(ctx context.Context) (aws.Credentials, error) {
-		return aws.Credentials{
-			AccessKeyID:     base.AccessKeyID,
-			SecretAccessKey: base.SecretAccessKey,
-			SessionToken:    base.SessionToken,
-			Source:          keyringService,
-		}, nil
-	})
-	svc := a.mkSTSClient(static)
+	svc := a.mkSTSClient(credsProvider(base))
 	input := &sts.AssumeRoleInput{
 		RoleArn:         &target.RoleArn,
 		RoleSessionName: new(keyringService + "-" + target.SourceProfile),
@@ -335,7 +375,7 @@ func (a *app) rotateCredentials(ctx context.Context, profileName string) (err er
 
 	_, err = a.DeleteAccessKey(ctx, &iam.DeleteAccessKeyInput{AccessKeyId: &oldAccessKeyID})
 
-	return err
+	return
 }
 
 //nolint:gocognit,cyclop,funlen,nakedret,gocyclo // ok
@@ -378,6 +418,15 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 		}
 
 		err = c.emitProfile()
+	case "sts-url":
+		var url string
+
+		url, err = a.resolveSTSURL(ctx)
+		if err != nil {
+			break
+		}
+
+		fmt.Println(url)
 	case "rotate":
 		err = a.rotateCredentials(ctx, a.AWSProfile)
 	case "store", "store-assume":

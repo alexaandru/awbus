@@ -1,4 +1,3 @@
-//nolint:lll // ok
 package main
 
 import (
@@ -10,16 +9,13 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iam_types "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/aws/aws-sdk-go-v2/service/sts/types"
 	"github.com/zalando/go-keyring"
 )
-
-type mockSTSClient struct {
-	assumeRoleFunc func(context.Context, *sts.AssumeRoleInput, ...func(*sts.Options)) (*sts.AssumeRoleOutput, error)
-}
 
 type mockIAMClient struct {
 	createAccessKeyFunc func(context.Context, *iam.CreateAccessKeyInput, ...func(*iam.Options)) (*iam.CreateAccessKeyOutput, error)
@@ -649,6 +645,27 @@ func TestCredsEmitProfile(t *testing.T) {
 	}
 }
 
+func TestCredsProvider(t *testing.T) {
+	c := Creds{
+		AccessKeyID:     "AKIA123",
+		SecretAccessKey: "secret123",
+		SessionToken:    "token123",
+	}
+
+	got, err := credsProvider(c)(t.Context())
+	if err != nil {
+		t.Fatalf("credsProvider() error = %v", err)
+	}
+
+	if got.AccessKeyID != c.AccessKeyID || got.SecretAccessKey != c.SecretAccessKey || got.SessionToken != c.SessionToken {
+		t.Errorf("credsProvider() = %+v, want creds from %+v", got, c)
+	}
+
+	if got.Source != keyringService {
+		t.Errorf("Source = %s, want %s", got.Source, keyringService)
+	}
+}
+
 func TestAppAssumeRole(t *testing.T) { //nolint:funlen // ok
 	expiration := time.Now().Add(time.Hour)
 
@@ -1041,6 +1058,36 @@ func TestAppRun(t *testing.T) { //nolint:funlen // ok
 					SessionTTL: 3600 * time.Second,
 				},
 			},
+		},
+		{
+			name: "sts-url command",
+			args: []string{"awbus", "sts-url"},
+			setupFn: func() {
+				keyring.Set(keyringService, "sts-url-profile", string(staticJSON)) //nolint:errcheck,gosec // ok
+			},
+			app: app{
+				config: config{
+					AWSProfile: "sts-url-profile",
+					SkewPad:    120 * time.Second,
+					SessionTTL: 3600 * time.Second,
+				},
+				mkPresignClient: func(aws.CredentialsProvider) stsPresignAPI {
+					return &mockPresignClient{
+						presignFunc: func(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.PresignOptions)) (*v4.PresignedHTTPRequest, error) {
+							return &v4.PresignedHTTPRequest{URL: "https://sts.amazonaws.com/?run=1"}, nil
+						},
+					}
+				},
+			},
+		},
+		{
+			name:    "sts-url command error",
+			args:    []string{"awbus", "sts-url"},
+			setupFn: func() {},
+			app: app{
+				config: config{AWSProfile: "nonexistent-sts-url-profile"},
+			},
+			wantErr: true,
 		},
 		{
 			name: "default load",

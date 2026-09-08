@@ -3,8 +3,9 @@ awbus - AWS credential_process helper using system keyring
 DESCRIPTION
     awbus securely stores AWS credentials in your system keyring and provides
     them to AWS CLI/SDK via the credential_process interface. It supports
-    static credentials, assumed roles with automatic session refresh, and
-    generic keyring operations for storing arbitrary secrets.
+    static credentials, assumed roles with automatic session refresh, cached
+    presigned STS GetCallerIdentity URLs, and generic keyring operations for
+    storing arbitrary secrets.
     It is OS independent, it supports all platforms supported by https://github.com/zalando/go-keyring
 
 USAGE
@@ -25,6 +26,8 @@ COMMANDS
     store-assume      Store assumed role configuration (interactive)
     rotate            Rotate static credentials (create new, delete old)
     delete            Delete profile from keyring (interactive)
+    sts-url           Return a cached, auto-refreshed presigned STS
+                      GetCallerIdentity URL for current profile
     get               Get arbitrary secret from keyring: awbus get <service> <username>
     put               Store arbitrary secret in keyring: awbus put [service] [username]
     version           Show version
@@ -39,6 +42,14 @@ CREDENTIAL TYPES
     Assumed AWS Roles
         Temporary AWS credentials obtained by assuming an IAM role using
         base credentials. Automatically refreshed before expiration.
+
+    Presigned STS URLs
+        A presigned STS GetCallerIdentity URL for the current profile's
+        credentials, for services that authenticate via AWS IAM identity
+        (e.g. `Authorization: IAM <url>`). Cached and reused; refreshed
+        automatically once it nears its assumed 15-minute lifetime (STS's
+        presign client sets no expiry itself, so that's a lifetime awbus
+        imposes, not one read off the URL).
 
     Generic Secrets
         Arbitrary key-value secrets stored in keyring via put/get commands.
@@ -69,6 +80,13 @@ KEYRING STORAGE
       "SkewPad": "2m"
     }
 
+    Presigned STS URL cache (separate keyring service "awbus-sts-url",
+    same username "<profile-name>", written by 'sts-url'):
+    {
+      "IssuedAt": "2024-01-15T10:30:00Z",
+      "Url": "https://sts.us-east-1.amazonaws.com/?Action=GetCallerIdentity&..."
+    }
+
 AWS PROFILE CONFIGURATION
     Add to ~/.aws/credentials:
 
@@ -95,6 +113,10 @@ GENERIC KEYRING COMMANDS
         awbus put myapp myuser                    # Prompts for secret
         get_my_secret.sh | awbus put myapp myuser # Secret from stdin (secure)
         awbus put                                 # Prompts for all values
+
+PRESIGNED STS URL EXAMPLE
+
+    curl -H "Authorization: IAM $(awbus -profile myprofile sts-url)" https://api.your-service.com/
 
 SECURITY
     - Credentials encrypted in system keyring (GNOME Keyring, macOS Keychain, Windows Credential Manager)

@@ -48,8 +48,6 @@ deadcode:
 
 fmt:
 	@go fmt ./...
-	@go tool -modfile=tools/go.mod goimports -local github.com/alexaandru -l -w .
-	@go run mvdan.cc/gofumpt@v0.8.0 -l -w -extra .
 
 clean:
 	@rm -f awbus awbus.test *.cov coverage.html
