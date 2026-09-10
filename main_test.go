@@ -10,6 +10,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+	cip "github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iam_types "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
@@ -1088,6 +1089,83 @@ func TestAppRun(t *testing.T) { //nolint:funlen // ok
 				config: config{AWSProfile: "nonexistent-sts-url-profile"},
 			},
 			wantErr: true,
+		},
+		{
+			name: "jwt command",
+			args: []string{"awbus", "-pool", "jwt-pool", "-token", "access", "-user", "alice", "jwt"},
+			setupFn: func() {
+				pool := CognitoPool{
+					UserPoolID: "pool1", ClientID: "client1", DefaultUser: "alice",
+					Users: []CognitoUser{{Username: "alice", Password: "secret"}},
+				}
+				b, _ := json.Marshal(pool)                                //nolint:errcheck // ok
+				keyring.Set(cognitoKeyringService, "jwt-pool", string(b)) //nolint:errcheck,gosec // ok
+			},
+			app: app{
+				config: config{SkewPad: 120 * time.Second},
+				mkCognitoClient: func() cognitoIdpAPI {
+					return &mockCognitoClient{initiateAuthFunc: func(context.Context, *cip.InitiateAuthInput, ...func(*cip.Options)) (*cip.InitiateAuthOutput, error) {
+						return authResult("run-id", "run-access", "run-refresh", 3600), nil
+					}}
+				},
+			},
+		},
+		{
+			name: "jwt command error",
+			args: []string{"awbus", "-pool", "jwt-error-pool", "-token", "bogus", "jwt"},
+			setupFn: func() {
+				pool := CognitoPool{
+					UserPoolID: "pool1", ClientID: "client1", DefaultUser: "alice",
+					Users: []CognitoUser{{Username: "alice", Password: "secret"}},
+				}
+				b, _ := json.Marshal(pool)                                      //nolint:errcheck // ok
+				keyring.Set(cognitoKeyringService, "jwt-error-pool", string(b)) //nolint:errcheck,gosec // ok
+
+				cache := jwtCache{IDToken: "cached-id", IssuedAt: time.Now(), ExpiresIn: time.Hour}
+				cb, _ := json.Marshal(cache, json.WithMarshalers(durationToJS))                  //nolint:errcheck // ok
+				keyring.Set(jwtKeyringService, "jwt-error-pool/pool1/client1/alice", string(cb)) //nolint:errcheck,gosec // ok
+			},
+			app: app{
+				config:          config{SkewPad: 120 * time.Second},
+				mkCognitoClient: func() cognitoIdpAPI { return &mockCognitoClient{} },
+			},
+			wantErr: true,
+		},
+		{
+			name: "jwt-add-user command",
+			args: []string{"awbus", "-pool", "jwt-add-user-pool", "jwt-add-user"},
+			setupFn: func() {
+				pool := CognitoPool{
+					UserPoolID: "pool1", ClientID: "client1", DefaultUser: "alice",
+					Users: []CognitoUser{{Username: "alice", Password: "secret"}},
+				}
+				b, _ := json.Marshal(pool)                                         //nolint:errcheck // ok
+				keyring.Set(cognitoKeyringService, "jwt-add-user-pool", string(b)) //nolint:errcheck,gosec // ok
+			},
+			mockPrompt: func(label string, val *string) error {
+				switch label {
+				case "Username":
+					*val = "bob"
+				case "Password for bob":
+					*val = "bobpass"
+				}
+
+				return nil
+			},
+			app: app{},
+		},
+		{
+			name: "jwt-set-default-user command",
+			args: []string{"awbus", "-pool", "jwt-set-default-user-pool", "-user", "bob", "jwt-set-default-user"},
+			setupFn: func() {
+				pool := CognitoPool{
+					UserPoolID: "pool1", ClientID: "client1", DefaultUser: "alice",
+					Users: []CognitoUser{{Username: "alice", Password: "secret"}, {Username: "bob", Password: "secret2"}},
+				}
+				b, _ := json.Marshal(pool)                                                 //nolint:errcheck // ok
+				keyring.Set(cognitoKeyringService, "jwt-set-default-user-pool", string(b)) //nolint:errcheck,gosec // ok
+			},
+			app: app{},
 		},
 		{
 			name: "default load",

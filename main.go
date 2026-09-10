@@ -18,6 +18,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 	acfg "github.com/aws/aws-sdk-go-v2/config"
+	cip "github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/zalando/go-keyring"
@@ -47,6 +48,7 @@ type app struct { //nolint:govet // ok
 	prompt          func(label string, val *string) error
 	mkSTSClient     func(aws.CredentialsProvider) stsAPI
 	mkPresignClient func(aws.CredentialsProvider) stsPresignAPI
+	mkCognitoClient func() cognitoIdpAPI
 }
 
 //nolint:inamedparam // ok
@@ -143,6 +145,9 @@ func newApp(iamClient iamAPI) (a app, err error) {
 	}
 	a.mkPresignClient = func(creds aws.CredentialsProvider) stsPresignAPI {
 		return sts.NewPresignClient(sts.New(sts.Options{Credentials: creds, Region: a.AWSRegion}))
+	}
+	a.mkCognitoClient = func() cognitoIdpAPI {
+		return cip.New(cip.Options{Region: a.AWSRegion})
 	}
 
 	return
@@ -397,7 +402,7 @@ func (a *app) rotateCredentials(ctx context.Context, profileName string) (err er
 //nolint:gocognit,cyclop,funlen,nakedret,gocyclo // ok
 func (a *app) run(ctx context.Context, args []string) (err error) {
 	// Parse flags and extract remaining args.
-	var profileOverride string
+	var profileOverride, tokenKind, userFlag, poolFlag string
 
 	filteredArgs := []string{args[0]} // Keep program name.
 
@@ -409,6 +414,21 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 			i++ // Skip the next arg (profile value).
 		case len(arg) > 9 && arg[:9] == "-profile=":
 			profileOverride = arg[9:]
+		case arg == "-token" && i+1 < len(args):
+			tokenKind = args[i+1]
+			i++
+		case len(arg) > 7 && arg[:7] == "-token=":
+			tokenKind = arg[7:]
+		case arg == "-user" && i+1 < len(args):
+			userFlag = args[i+1]
+			i++
+		case len(arg) > 6 && arg[:6] == "-user=":
+			userFlag = arg[6:]
+		case arg == "-pool" && i+1 < len(args):
+			poolFlag = args[i+1]
+			i++
+		case len(arg) > 6 && arg[:6] == "-pool=":
+			poolFlag = arg[6:]
 		default:
 			filteredArgs = append(filteredArgs, arg)
 		}
@@ -418,6 +438,8 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 	if profileOverride != "" {
 		a.AWSProfile = profileOverride
 	}
+
+	poolName := cmp.Or(poolFlag, defaultPoolName)
 
 	cmd := "load"
 	if len(filteredArgs) > 1 {
@@ -443,6 +465,19 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 		}
 
 		fmt.Println(url)
+	case "jwt":
+		var token string
+
+		token, err = a.jwt(ctx, poolName, userFlag, tokenKind)
+		if err != nil {
+			break
+		}
+
+		fmt.Println(token)
+	case "jwt-add-user":
+		err = a.addCognitoUser(poolName)
+	case "jwt-set-default-user":
+		err = a.setDefaultCognitoUser(poolName, userFlag)
 	case "rotate":
 		err = a.rotateCredentials(ctx, a.AWSProfile)
 	case "store", "store-assume":

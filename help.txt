@@ -4,7 +4,8 @@ DESCRIPTION
     awbus securely stores AWS credentials in your system keyring and provides
     them to AWS CLI/SDK via the credential_process interface. It supports
     static credentials, assumed roles with automatic session refresh, cached
-    presigned STS GetCallerIdentity URLs, and generic keyring operations for
+    presigned STS GetCallerIdentity URLs, Cognito User Pool JWTs with
+    automatic refresh-token rotation, and generic keyring operations for
     storing arbitrary secrets.
     It is OS independent, it supports all platforms supported by https://github.com/zalando/go-keyring
 
@@ -18,7 +19,28 @@ ENVIRONMENT VARIABLES
     SESSION_TTL       AssumeRole session duration (default: "1h")
 
 FLAGS
-    -profile <name>   Override profile name (overrides AWS_PROFILE)
+    -profile <name>   Override profile name (overrides AWS_PROFILE). Used by
+                      load/store/store-assume/rotate/delete/sts-url only -
+                      irrelevant to jwt/jwt-add-user/jwt-set-default-user,
+                      which use -pool instead (Cognito needs no AWS creds).
+    -pool <name>      For jwt/jwt-add-user/jwt-set-default-user: name a
+                      Cognito pool config. Optional - omit it unless you
+                      keep more than one separate Cognito pool config.
+                      Entirely independent of -profile/AWS_PROFILE - a
+                      pool's config and users are their own named thing,
+                      not tied to any AWS profile.
+    -token <kind>     For 'jwt': which token to print, "id" or "access"
+                      (default: "id")
+    -user <sel>       For 'jwt': select which (existing Cognito) user to
+                      use. Omit to use the pool's default user, or to be
+                      prompted if the pool has none yet. An unambiguous
+                      prefix of a stored username selects that user. "-"
+                      prompts for a username interactively. A name that
+                      matches no stored user registers it with awbus
+                      (prompting for its password) and becomes the pool's
+                      default if it's the first user on the pool. awbus
+                      never creates or modifies users in Cognito itself -
+                      the user must already exist there.
 
 COMMANDS
     load (default)    Load and return credentials for current profile
@@ -28,6 +50,15 @@ COMMANDS
     delete            Delete profile from keyring (interactive)
     sts-url           Return a cached, auto-refreshed presigned STS
                       GetCallerIdentity URL for current profile
+    jwt               Return a cached, auto-refreshed Cognito User Pool
+                      JWT (IdToken or AccessToken); prompts to configure
+                      the pool/user on first use
+    jwt-add-user      Register an additional existing Cognito user
+                      (interactive; does not call Cognito - only stores
+                      credentials for later use by jwt)
+    jwt-set-default-user
+                      Set the default user to the one -user resolves to
+                      (errors if it matches no stored user)
     get               Get arbitrary secret from keyring: awbus get <service> <username>
     put               Store arbitrary secret in keyring: awbus put [service] [username]
     version           Show version
@@ -50,6 +81,18 @@ CREDENTIAL TYPES
         automatically once it nears its assumed 15-minute lifetime (STS's
         presign client sets no expiry itself, so that's a lifetime awbus
         imposes, not one read off the URL).
+
+    Cognito User Pool JWTs
+        A JWT (IdToken or AccessToken) issued by AWS Cognito InitiateAuth
+        (USER_PASSWORD_AUTH) for a user in a Cognito User Pool - independent
+        of any AWS profile, no AWS IAM permissions needed to call Cognito,
+        only that the pool's app client has ALLOW_USER_PASSWORD_AUTH and
+        ALLOW_REFRESH_TOKEN_AUTH enabled. Cached and reused until near
+        expiry (Cognito reports the real TTL, typically 1h); refreshed via
+        the stored refresh token, falling back to a full username/password
+        re-auth if that's expired or been revoked. Can hold multiple
+        Cognito users (see -user flag) with one set as default, used when
+        -user is omitted.
 
     Generic Secrets
         Arbitrary key-value secrets stored in keyring via put/get commands.
@@ -87,6 +130,30 @@ KEYRING STORAGE
       "Url": "https://sts.us-east-1.amazonaws.com/?Action=GetCallerIdentity&..."
     }
 
+    Cognito pool config (separate keyring service "awbus-cognito", username
+    "<pool-name>" i.e. the -pool flag value - entirely independent of any
+    AWS profile; written by 'jwt' on first use, 'jwt-add-user' and
+    'jwt-set-default-user'):
+    {
+      "UserPoolId": "us-east-1_abc123",
+      "ClientId": "1h2example3client4id",
+      "DefaultUser": "alice",
+      "Users": [
+        {"Username": "alice", "Password": "..."},
+        {"Username": "alex",  "Password": "..."}
+      ]
+    }
+
+    Cognito JWT cache (separate keyring service "awbus-jwt", username
+    "<pool-name>/<UserPoolId>/<ClientId>/<Username>", written by 'jwt'):
+    {
+      "IdToken": "eyJraWQ...",
+      "AccessToken": "eyJraWQ...",
+      "RefreshToken": "eyJjdHkiOi...",
+      "IssuedAt": "2024-01-15T10:30:00Z",
+      "ExpiresIn": "1h"
+    }
+
 AWS PROFILE CONFIGURATION
     Add to ~/.aws/credentials:
 
@@ -117,6 +184,17 @@ GENERIC KEYRING COMMANDS
 PRESIGNED STS URL EXAMPLE
 
     curl -H "Authorization: IAM $(awbus -profile myprofile sts-url)" https://api.your-service.com/
+
+COGNITO JWT EXAMPLE
+
+    Requires the pool's app client to have ALLOW_USER_PASSWORD_AUTH and
+    ALLOW_REFRESH_TOKEN_AUTH enabled (Cognito console: App client ->
+    Authentication flows).
+
+    curl -H "Authorization: Bearer $(awbus jwt)" https://api.your-service.com/
+    awbus jwt -user alice          # unambiguous prefix
+    awbus jwt -user - -token=access
+    awbus -pool mypool jwt         # only needed for a second, separate pool config
 
 SECURITY
     - Credentials encrypted in system keyring (GNOME Keyring, macOS Keychain, Windows Credential Manager)

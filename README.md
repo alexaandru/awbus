@@ -20,6 +20,8 @@ and provides them via the AWS `credential_process` interface. Features:
   - assumed AWS roles (with automatic refresh)
   - presigned STS `GetCallerIdentity` URLs, cached and auto-refreshed, for services
     authenticating via AWS IAM identity (`Authorization: IAM <url>`)
+  - Cognito User Pool JWTs, cached and auto-refreshed, for a user signed in with
+    a username and password
   - generic keyring operations: store and retrieve arbitrary secrets securely
 - **Smart caching** - Automatically refreshes AWS session credentials before expiration
 - **Zero configuration** - Works seamlessly with existing AWS CLI profiles
@@ -47,22 +49,30 @@ add that folder to your `$PATH` or use the full path (i.e. the output of
 
 and these flags:
 
-- `-profile <name>` - Override profile name (takes precedence over `AWS_PROFILE`)
+- `-profile <name>` - Override profile name (takes precedence over `AWS_PROFILE`). Used by
+  `load`/`store`/`store-assume`/`rotate`/`delete`/`sts-url` only.
+- `-pool <name>` - Which Cognito pool config to use (default: `"default"`). Used by
+  `jwt`/`jwt-add-user`/`jwt-set-default-user` only, entirely independent of `-profile`/`AWS_PROFILE` -
+  Cognito needs no AWS credentials, so a pool's config and users aren't tied to any AWS profile.
+- `-user <sel>`, `-token <kind>` - see the Cognito JWTs section below.
 
 Commands:
 
-| Command          | Description                                                   |
-| ---------------- | ------------------------------------------------------------- |
-| `load` (default) | 🔐 Load+display credentials for current (AWS_PROFILE) profile |
-| `sts-url`        | 🔏 Cached, auto-refreshed presigned STS `GetCallerIdentity` URL |
-| `store`          | 💾 Store static AWS credentials (interactive)                 |
-| `store-assume`   | 🎭 Store assumed role configuration (interactive)             |
-| `rotate`         | 🔄 Rotate static credentials (create new, delete old)         |
-| `delete`         | 🗑️ Delete profile from keyring (interactive)                  |
-| `get`            | 🔍 Get arbitrary secret: `awbus get <service> <username>`     |
-| `put`            | 💾 Store arbitrary secret: `awbus put [service] [username]`   |
-| `version`        | ℹ️ Show version                                               |
-| `help`           | ❓ Show detailed help                                         |
+| Command                | Description                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------ |
+| `load` (default)       | 🔐 Load+display credentials for current (AWS_PROFILE) profile                  |
+| `store`                | 💾 Store static AWS credentials (interactive)                                  |
+| `store-assume`         | 🎭 Store assumed role configuration (interactive)                              |
+| `rotate`               | 🔄 Rotate static credentials (create new, delete old)                          |
+| `delete`               | 🗑️ Delete profile from keyring (interactive)                                   |
+| `sts-url`              | 🔏 Cached, auto-refreshed presigned STS `GetCallerIdentity` URL                |
+| `jwt`                  | 🪪 Cached, auto-refreshed Cognito User Pool JWT (auto-provisions on first use) |
+| `jwt-add-user`         | ➕ Register an additional existing Cognito user with the pool (interactive)    |
+| `jwt-set-default-user` | 🎯 Set the pool's default Cognito user                                         |
+| `get`                  | 🔍 Get arbitrary secret: `awbus get <service> <username>`                      |
+| `put`                  | 💾 Store arbitrary secret: `awbus put [service] [username]`                    |
+| `version`              | ℹ️ Show version                                                                |
+| `help`                 | ❓ Show detailed help                                                          |
 
 The `store[-assume]`/`load` pairs work on **AWS profiles** while `put`/`get` work on **generic** (arbitrary)
 **secrets**:
@@ -107,6 +117,30 @@ ready to use - cached and refreshed automatically, so it's safe to call on every
 
 ```bash
 curl -H "Authorization: IAM $(awbus -profile myprofile sts-url)" https://api.your-service.com/
+```
+
+### Cognito User Pool JWTs
+
+`jwt` signs a user in to a named Cognito pool (`-pool`, default `"default"` - independent of any
+AWS profile, since Cognito needs no AWS credentials at all) and hands the resulting JWT - cached
+and refreshed automatically (via the stored refresh token, falling back to a full password
+re-auth once that's expired), so it's safe to call on every request. The pool's app client just
+needs `ALLOW_USER_PASSWORD_AUTH`/`ALLOW_REFRESH_TOKEN_AUTH` enabled. The first call on a pool
+prompts to configure it and its first user; `awbus` never creates or modifies users in Cognito
+itself, it only stores an existing user's credentials locally:
+
+```bash
+curl -H "Authorization: Bearer $(awbus jwt)" https://api.your-service.com/
+```
+
+A pool can hold multiple Cognito users - `-user <prefix>` picks one by an unambiguous prefix of
+its username, `-user -` prompts for one interactively, and `jwt-add-user` / `jwt-set-default-user`
+manage the set and its default explicitly:
+
+```bash
+awbus jwt -user alice          # unambiguous prefix
+awbus jwt-add-user             # register another existing user
+awbus jwt-set-default-user -user bob
 ```
 
 ### SSH Keys
