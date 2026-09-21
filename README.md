@@ -165,21 +165,71 @@ run, but other terminals would not have access to the same ssh agent.
 > **Note**: Don't forget to delete the keys on disk after you confirm they
 > load correctly from the keyring.
 
-### Shell Environment Variables
+### Secrets for Other Tools
 
-Export secrets as environment variables without hardcoding them in dotfiles:
+Plenty of tools only take their credentials from a config file or an environment
+variable. You can feed them from the keyring instead, so the secret exists only
+while the tool is actually running.
+
+First, store the secret (one time operation):
 
 ```bash
-# 1st, store them (one time operation):
-awbus put myapp apikey # will prompt for secret, never pass it in commandline
-awbus put mydb url     # same
-
-# Then, in ~/.bashrc, ~/.zshenv, etc.
-export MY_API_KEY="$(awbus get myapp apikey)"
-export DATABASE_URL="$(awbus get mydb url)"
+awbus put openrouter you@example.com # will prompt, never pass a secret in commandline
 ```
 
-This way, secrets stay in the keyring & dotfiles stay secrets free.
+#### Best: let the tool fetch it itself
+
+Some tools accept a *command* to run for the credential rather than a literal
+value. Then no environment variable is ever created, and the secret never touches
+the config file. The [pi](https://pi.dev) coding agent does this with a `!`
+prefix - put this in its `models.json`:
+
+```json
+{
+  "providers": {
+    "openrouter": {
+      "apiKey": "!awbus get openrouter you@example.com"
+    }
+  }
+}
+```
+
+This is the same shape as AWS's `credential_process`, which `awbus load`
+implements.
+
+#### Otherwise: a per-command wrapper
+
+If the tool insists on an environment variable, wrap it in a shell function that
+sets the variable for that one invocation only:
+
+```bash
+# in ~/.bashrc, ~/.zshrc, etc.
+claude() {
+  CLAUDE_CODE_OAUTH_TOKEN="$(awbus get claude you@example.com)" command claude "$@"
+}
+```
+
+The `command` prefix is required: the function shadows the real binary, so without
+it you get infinite recursion.
+
+#### Why not just export it
+
+```bash
+# in ~/.zshenv:
+export CLAUDE_CODE_OAUTH_TOKEN="$(awbus get claude you@example.com)"
+```
+
+This also keeps the secret out of your dotfiles, but the variable then lands in
+the environment of *every* process you spawn for the rest of the session, not just
+the one that needs it: it shows up in `env` output, in `/proc/<pid>/environ` for
+anything running as you, and in whatever your tools dump on a crash. It's also
+read once at login, so it goes stale the moment you rotate the secret.
+
+The wrapper doesn't make the variable invisible - it's still in that child
+process's environment while it runs, and still readable from `/proc` by anything
+running as you. What it changes is the blast radius: one process instead of all of
+them, for seconds instead of for the whole session, and always the current value of
+the secret.
 
 ## 📄 License
 
