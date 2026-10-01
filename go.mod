@@ -6,7 +6,7 @@ go 1.27.1
 retract v1.3.0
 
 require (
-	github.com/alexaandru/confetti v1.6.2
+	github.com/alexaandru/confetti v1.6.3
 	github.com/aws/aws-sdk-go-v2 v1.47.0
 	github.com/aws/aws-sdk-go-v2/config v1.33.4
 	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.74.0

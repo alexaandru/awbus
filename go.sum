@@ -1,5 +1,5 @@
-github.com/alexaandru/confetti v1.6.2 h1:ryVsn5MHTK1Puv802noCyoocu9GP56mt/SMW7P7JunQ=
-github.com/alexaandru/confetti v1.6.2/go.mod h1:eXzJw7hI+t2XbNda3LN6yRrdk8uPeQC0Ygld0X9+dG8=
+github.com/alexaandru/confetti v1.6.3 h1:Fj4zkAtJ1aS0J2saH9NjOP6HUWxsZgwfJ8iVS86SKgw=
+github.com/alexaandru/confetti v1.6.3/go.mod h1:nCfddFNEX2SAo8Jd4jQkJyOTRsm++ix2Z3/Bz5iX1Sw=
 github.com/aws/aws-sdk-go-v2 v1.47.0 h1:0jsHallhJCeaU0Ko48c/3FK1ctOQ7NpzggxriJOQ8MQ=
 github.com/aws/aws-sdk-go-v2 v1.47.0/go.mod h1:bttEH6JqnUL8LepvDVfdrds/fZ5bCIxzpe3abyUrhDU=
 github.com/aws/aws-sdk-go-v2/config v1.33.4 h1:FzvkXKSzwqHni4U7nDigHg4jjtqMpVUuHgmZfSoJVQ0=
