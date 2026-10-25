@@ -12,6 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cognitoidentityprovider v1.75.5
 	github.com/aws/aws-sdk-go-v2/service/iam v1.64.5
 	github.com/aws/aws-sdk-go-v2/service/sts v1.51.5
+	github.com/pquerna/otp v1.5.0
 	github.com/zalando/go-keyring v0.2.9-0.20260724212736-66b55cc0c51c
 	golang.org/x/term v0.47.0
 )
@@ -29,6 +30,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sso v1.38.5 // indirect
 	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.43.5 // indirect
 	github.com/aws/smithy-go v1.28.6 // indirect
+	github.com/boombuler/barcode v1.0.1-0.20190219062509-6c824513bacc // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/godbus/dbus/v5 v5.2.4 // indirect
 	golang.org/x/sys v0.49.0 // indirect

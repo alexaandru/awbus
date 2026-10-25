@@ -501,7 +501,10 @@ func sleepCtx(ctx context.Context, d time.Duration) (err error) {
 //nolint:gocognit,cyclop,funlen,nakedret,gocyclo // ok
 func (a *app) run(ctx context.Context, args []string) (err error) {
 	// Parse flags and extract remaining args.
-	var profileOverride, tokenKind, userFlag, poolFlag string
+	var (
+		profileOverride, tokenKind, userFlag, poolFlag string
+		otpAdd                                         otpAddOpts
+	)
 
 	filteredArgs := []string{args[0]} // Keep program name.
 
@@ -528,6 +531,26 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 			i++
 		case len(arg) > 6 && arg[:6] == "-pool=":
 			poolFlag = arg[6:]
+		case arg == "-issuer" && i+1 < len(args):
+			otpAdd.Issuer = args[i+1]
+			i++
+		case len(arg) > 8 && arg[:8] == "-issuer=":
+			otpAdd.Issuer = arg[8:]
+		case arg == "-period" && i+1 < len(args):
+			otpAdd.Period = args[i+1]
+			i++
+		case len(arg) > 8 && arg[:8] == "-period=":
+			otpAdd.Period = arg[8:]
+		case arg == "-algorithm" && i+1 < len(args):
+			otpAdd.Algorithm = args[i+1]
+			i++
+		case len(arg) > 11 && arg[:11] == "-algorithm=":
+			otpAdd.Algorithm = arg[11:]
+		case arg == "-digits" && i+1 < len(args):
+			otpAdd.Digits = args[i+1]
+			i++
+		case len(arg) > 8 && arg[:8] == "-digits=":
+			otpAdd.Digits = arg[8:]
 		default:
 			filteredArgs = append(filteredArgs, arg)
 		}
@@ -681,15 +704,19 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 	case "list":
 		err = a.listAll()
 	case "list-profiles":
-		err = printListSection("profiles", keyringService)
+		err = printListNames(keyringService)
 	case "list-sts-url":
-		err = printListSection("sts-url", stsURLKeyringService)
+		err = printListNames(stsURLKeyringService)
 	case "list-cognito":
-		err = printListSection("cognito", cognitoKeyringService)
+		err = printListNames(cognitoKeyringService)
 	case "list-jwt":
-		err = printListSection("jwt", jwtKeyringService)
+		err = printListNames(jwtKeyringService)
 	case "list-generic":
-		err = printListSection("generic", genericKeyringService)
+		err = printListNames(genericKeyringService)
+	case "list-otp":
+		err = printListNames(otpKeyringService)
+	case "otp":
+		err = a.otpCommand(filteredArgs[2:], otpAdd)
 	case "migrate":
 		err = a.migrateFromConfigs(filteredArgs[2:])
 	case "help":

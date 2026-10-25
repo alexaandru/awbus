@@ -88,6 +88,21 @@ func printListSection(title, service string) (err error) {
 	return
 }
 
+// printListNames prints one username per line with no header or indent.
+// Used by list-* / otp list so the output is shell-friendly.
+func printListNames(service string) (err error) {
+	users, err := listUsers(service)
+	if err != nil {
+		return
+	}
+
+	for _, u := range users {
+		fmt.Println(u)
+	}
+
+	return
+}
+
 func (a *app) listAll() (err error) {
 	sections := []struct{ title, service string }{
 		{"profiles", keyringService},
@@ -95,6 +110,7 @@ func (a *app) listAll() (err error) {
 		{"cognito", cognitoKeyringService},
 		{"jwt", jwtKeyringService},
 		{"generic", genericKeyringService},
+		{"otp", otpKeyringService},
 	}
 
 	for i, s := range sections {

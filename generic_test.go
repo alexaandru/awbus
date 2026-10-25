@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -202,6 +203,51 @@ func TestListAllAndEmptySection(t *testing.T) {
 	}
 
 	if err := printListSection("empty", "no-such-service-zzzz"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPrintListNamesPlain(t *testing.T) {
+	keyring.MockInit()
+
+	if err := keyring.Set(otpKeyringService, "Slack", "{}"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := keyring.Set(otpKeyringService, "NPM", "{}"); err != nil {
+		t.Fatal(err)
+	}
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	oldStdout := os.Stdout
+
+	t.Cleanup(func() { os.Stdout = oldStdout })
+
+	os.Stdout = w
+
+	if err = printListNames(otpKeyringService); err != nil {
+		t.Fatal(err)
+	}
+
+	if err = w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := string(raw)
+	if got != "NPM\nSlack\n" {
+		t.Fatalf("got %q", got)
+	}
+
+	if err = printListNames("no-such-service-zzzz"); err != nil {
 		t.Fatal(err)
 	}
 }

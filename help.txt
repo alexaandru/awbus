@@ -41,6 +41,10 @@ FLAGS
                       default if it's the first user on the pool. awbus
                       never creates or modifies users in Cognito itself -
                       the user must already exist there.
+    -issuer <name>    For 'otp add': issuer (default: username)
+    -period <secs>    For 'otp add': TOTP period (default: 30)
+    -algorithm <alg>  For 'otp add': sha1|sha256|sha512 (default: sha1)
+    -digits <n>       For 'otp add': 6 or 8 (default: 6)
 
 COMMANDS
     load (default)    Load and return credentials for current profile
@@ -69,11 +73,21 @@ COMMANDS
     put               Store a generic secret: awbus put [kind] [name]
                       Always writes awbus-generic (kind/name); drops legacy.
     list              List usernames in all awbus* keyring services (grouped)
-    list-profiles     List AWS profile names (service awbus)
-    list-sts-url      List STS URL cache entries (service awbus-sts-url)
-    list-cognito      List Cognito pool names (service awbus-cognito)
-    list-jwt          List JWT cache keys (service awbus-jwt)
-    list-generic      List generic secrets as kind/name (service awbus-generic)
+    list-profiles     List AWS profile names, one per line
+    list-sts-url      List STS URL cache entries, one per line
+    list-cognito      List Cognito pool names, one per line
+    list-jwt          List JWT cache keys, one per line
+    list-generic      List generic secrets as kind/name, one per line
+    list-otp          List OTP entry names, one per line
+    otp code <name>   Generate TOTP; print "<name> OK"; copy code to clipboard
+    otp verify <name> <code>
+                      Validate a TOTP code (prints true/false)
+    otp list          Same as list-otp
+    otp add [name]    Add/update an OTP entry (interactive; -issuer/-period/
+                      -algorithm/-digits optional; secret via prompt or stdin)
+    otp delete <name> Delete an OTP entry (Enter/y to confirm)
+    otp import <file> Import legacy otp.json array (confirm each overwrite)
+    otp export [file] Export otp.json array (file required if stdout is a TTY)
     migrate           Scan shell config for `awbus get`, confirm, and move
                       legacy generics into awbus-generic. Extra file/dir args
                       are scanned in addition to SHELL/ZDOTDIR defaults.
@@ -117,12 +131,13 @@ CREDENTIAL TYPES
         Useful for SSH keys, API tokens, database URLs, etc.
 
 KEYRING STORAGE
-    Five keyring services (deliberately non-colliding):
+    Six keyring services (deliberately non-colliding):
       "awbus"           AWS profiles / Creds (username = profile name)
       "awbus-sts-url"   Presigned STS URL cache (username = profile name)
       "awbus-cognito"   Cognito pool config + users (username = pool name)
       "awbus-jwt"       Cognito JWT token cache (username = pool/user key)
       "awbus-generic"   Arbitrary secrets (username = "<kind>/<name>")
+      "awbus-otp"       TOTP entries (username = entry name; JSON fields)
     CLI remains `get|put <kind> <name>`; storage is always under awbus-generic.
     `get` still falls back to the legacy (kind, name) keyring pair.
 
@@ -203,7 +218,8 @@ GENERIC KEYRING COMMANDS
                                - Secret read from stdin (secure) or prompted interactively
                                - Missing kind/name will be prompted
                                - Never pass secrets as command arguments!
-    list / list-*               List keyring usernames (never prints secret values)
+    list                        Grouped usernames across awbus* services
+    list-*                      One category, one name per line (no header)
     migrate [paths...]          Find `awbus get` in shell configs and migrate
 
     Examples:

@@ -8,7 +8,8 @@
 [![Socket.dev](https://socket.dev/api/badge/go/package/github.com/alexaandru/awbus)](https://socket.dev/go/package/github.com/alexaandru/awbus)
 
 AWS [credential_process](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sourcing-external.html)
-helper using system keyring with secure storage, automatic credential management, and generic keyring operations.
+helper using system keyring with secure storage, automatic credential management,
+generic secrets, and TOTP one-time passwords.
 
 ## 📋 Overview
 
@@ -23,6 +24,7 @@ and provides them via the AWS `credential_process` interface. Features:
   - Cognito User Pool JWTs, cached and auto-refreshed, for a user signed in with
     a username and password
   - generic keyring operations: store and retrieve arbitrary secrets securely
+  - TOTP one-time passwords (keyring-backed; code copied to the clipboard)
 - **Smart caching** - Automatically refreshes AWS session credentials before expiration
 - **Zero configuration** - Works seamlessly with existing AWS CLI profiles
   (i.e. `aws cli`, `terraform apply`, code that uses **AWS SDK**, etc. should all work unmodified)
@@ -58,28 +60,30 @@ and these flags:
 
 Commands:
 
-| Command                | Description                                                                    |
-| ---------------------- | ------------------------------------------------------------------------------ |
-| `load` (default)       | 🔐 Load+display credentials for current (AWS_PROFILE) profile                  |
-| `store`                | 💾 Store static AWS credentials (interactive; confirms overwrite)              |
-| `store-assume`         | 🎭 Store assumed role configuration (interactive; confirms overwrite)          |
+| Command                | Description                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------ |
+| `load` (default)       | 🔐 Load+display credentials for current (AWS_PROFILE) profile                              |
+| `store`                | 💾 Store static AWS credentials (interactive; confirms overwrite)                          |
+| `store-assume`         | 🎭 Store assumed role configuration (interactive; confirms overwrite)                      |
 | `rotate`               | 🔄 Rotate static credentials (create new, delete old; polls until IAM accepts the new key) |
-| `delete`               | 🗑️ Delete profile from keyring (interactive; Enter/y to confirm)               |
-| `sts-url`              | 🔏 Cached, auto-refreshed presigned STS `GetCallerIdentity` URL                |
-| `jwt`                  | 🪪 Cached, auto-refreshed Cognito User Pool JWT (auto-provisions on first use) |
-| `jwt-add-user`         | ➕ Register an additional existing Cognito user with the pool (interactive)    |
-| `jwt-set-default-user` | 🎯 Set the pool's default Cognito user                                         |
-| `get`                  | 🔍 Get generic secret: `awbus get <kind> <name>` (awbus-generic, else legacy)  |
-| `put`                  | 💾 Store generic secret under `awbus-generic` as `kind/name`                   |
-| `list` / `list-*`      | 📋 List keyring usernames (profiles, sts-url, cognito, jwt, generic)           |
-| `migrate`              | 🚚 Scan shell configs for `awbus get`, confirm, migrate into awbus-generic     |
-| `version`              | ℹ️ Show version                                                                |
-| `help`                 | ❓ Show detailed help                                                          |
+| `delete`               | 🗑️ Delete profile from keyring (interactive; Enter/y to confirm)                           |
+| `sts-url`              | 🔏 Cached, auto-refreshed presigned STS `GetCallerIdentity` URL                            |
+| `jwt`                  | 🪪 Cached, auto-refreshed Cognito User Pool JWT (auto-provisions on first use)             |
+| `jwt-add-user`         | ➕ Register an additional existing Cognito user with the pool (interactive)                |
+| `jwt-set-default-user` | 🎯 Set the pool's default Cognito user                                                     |
+| `get`                  | 🔍 Get generic secret: `awbus get <kind> <name>` (awbus-generic, else legacy)              |
+| `put`                  | 💾 Store generic secret under `awbus-generic` as `kind/name`                               |
+| `list` / `list-*`      | 📋 List usernames (`list` grouped; `list-*` one name per line)                             |
+| `otp code\|verify\|…`  | 🔢 TOTP via `awbus-otp` (code copies to clipboard; import/export otp.json)                 |
+| `migrate`              | 🚚 Scan shell configs for `awbus get`, confirm, migrate into awbus-generic                 |
+| `version`              | ℹ️ Show version                                                                            |
+| `help`                 | ❓ Show detailed help                                                                      |
 
 The `store[-assume]`/`load` pairs work on **AWS profiles** while `put`/`get` work on **generic**
 **secrets** (stored under keyring service `awbus-generic` as `kind/name`; `get` still falls back to
-the legacy `(kind, name)` pair). Use `awbus list` / `list-*` to list usernames, and `awbus migrate`
-to move legacy generics into `awbus-generic` after scanning shell configs.
+the legacy `(kind, name)` pair). TOTP lives under `awbus-otp` — see [TOTP one-time passwords](#totp-one-time-passwords)
+below. Use `awbus list` for a grouped view, or `list-*` for one name per line (shell-friendly).
+Use `awbus migrate` to move legacy generics into `awbus-generic` after scanning shell configs.
 
 ```bash
 awbus put myapp myuser # Store a secret (prompts for secret securely)
@@ -88,7 +92,7 @@ cat secret.txt | awbus put myapp myuser # OR pass secret to stdin
 
 awbus get myapp myuser # Retrieve the secret
 awbus list-generic
-awbus migrate          # or: awbus migrate ~/Personal/Config/zsh
+awbus migrate          # or: awbus migrate ~/Config/zsh
 ```
 
 **Security Note**: Secrets are never accepted as command line arguments to prevent exposure in shell history or process lists.
@@ -149,6 +153,33 @@ awbus jwt-add-user             # register another existing user
 awbus jwt-set-default-user -user bob
 ```
 
+### TOTP one-time passwords
+
+TOTP seeds live in the keyring under service `awbus-otp` (not on disk). `otp code` generates
+the current code, prints `"<name> OK"`, and copies the code to the clipboard (`pbcopy` /
+`clip` / `wl-copy` / `xclip` / `xsel`). The secret is never printed and never accepted on
+argv — prompt or stdin only, same rule as `put`.
+
+```bash
+# One-shot migrate from a legacy otp.json array (lowercase keys; confirms each overwrite)
+awbus otp import ~/otp.json
+
+awbus list-otp                 # one name per line (same as: awbus otp list)
+awbus otp code AWS/Prognos     # prints "AWS/Prognos OK"; code on clipboard
+awbus otp verify AWS/Prognos 123456
+
+awbus otp add Slack            # prompts for secret; optional -issuer/-period/-algorithm/-digits
+awbus otp delete Slack         # Enter/y to confirm
+
+awbus otp export /tmp/otp.json # file required if stdout is a TTY
+# Shell completion helper (no dedicated complete subcommand):
+#   awbus otp list | paste -s
+```
+
+Import/export use the legacy `otp.json` shape (`username`, `secret`, `issuer`, `period`,
+`algorithm`, `digits`). Keyring storage itself is PascalCase house JSON. Defaults when
+omitted: period `30`, algorithm `sha1`, digits `6`, issuer = username.
+
 ### SSH Keys
 
 Store private keys in the keyring and load them straight into `ssh-agent` on demand — no
@@ -185,7 +216,7 @@ awbus put openrouter you@example.com # will prompt, never pass a secret in comma
 
 #### Best: let the tool fetch it itself
 
-Some tools accept a *command* to run for the credential rather than a literal
+Some tools accept a _command_ to run for the credential rather than a literal
 value. Then no environment variable is ever created, and the secret never touches
 the config file. The [pi](https://pi.dev) coding agent does this with a `!`
 prefix - put this in its `models.json`:
@@ -226,7 +257,7 @@ export CLAUDE_CODE_OAUTH_TOKEN="$(awbus get claude you@example.com)"
 ```
 
 This also keeps the secret out of your dotfiles, but the variable then lands in
-the environment of *every* process you spawn for the rest of the session, not just
+the environment of _every_ process you spawn for the rest of the session, not just
 the one that needs it: it shows up in `env` output, in `/proc/<pid>/environ` for
 anything running as you, and in whatever your tools dump on a crash. It's also
 read once at login, so it goes stale the moment you rotate the secret.
