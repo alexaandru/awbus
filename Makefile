@@ -4,7 +4,7 @@ install:
 	@go install
 
 test:
-	@go test -race -vet all -coverprofile=unit.cov -covermode=atomic -race -count=5 $(OPTS) ./...
+	@go test -race -vet all -coverprofile=unit.cov -covermode=atomic -count=5 $(OPTS) ./...
 	@go tool cover -func=unit.cov|tail -n1
 	@go tool -modfile=tools/go.mod stampli -quiet -coverage=$$(go tool cover -func=unit.cov|tail -n1|tr -s "\t"|cut -f3|tr -d "%")
 
@@ -12,7 +12,7 @@ vet:
 	@go vet -all ./...
 
 fix:
-	@go run fix ./...
+	@go fix ./...
 
 update: update-go
 	@unset GOFIPS140; go get -u ./...
@@ -29,7 +29,6 @@ update-go:
 unit.cov: test
 
 lint:
-	@go run golang.org/x/tools/gopls/internal/analysis/modernize/cmd/modernize@latest -test ./...
 	@go tool -modfile=tools/go.mod golangci-lint config verify
 	@go tool -modfile=tools/go.mod golangci-lint run
 

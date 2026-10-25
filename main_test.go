@@ -27,6 +27,18 @@ func (m *mockSTSClient) AssumeRole(ctx context.Context, input *sts.AssumeRoleInp
 	return m.assumeRoleFunc(ctx, input, opts...)
 }
 
+func (m *mockSTSClient) GetCallerIdentity(ctx context.Context, input *sts.GetCallerIdentityInput, opts ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
+	return m.getCallerIdentityFunc(ctx, input, opts...)
+}
+
+func readySTSClient() *mockSTSClient {
+	return &mockSTSClient{
+		getCallerIdentityFunc: func(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
+			return &sts.GetCallerIdentityOutput{}, nil
+		},
+	}
+}
+
 func (m *mockIAMClient) CreateAccessKey(ctx context.Context, input *iam.CreateAccessKeyInput, opts ...func(*iam.Options)) (*iam.CreateAccessKeyOutput, error) {
 	return m.createAccessKeyFunc(ctx, input, opts...)
 }
@@ -871,7 +883,7 @@ func TestAppResolveAndMaybeRefresh(t *testing.T) { //nolint:funlen // ok
 					SourceProfile: "nested-source",
 				}
 				nestedRoleJSON, _ := json.Marshal(nestedRoleCreds)                 //nolint:errcheck // ok
-				keyring.Set(keyringService, "nested-role", string(nestedRoleJSON)) //nolint:errcheck,gosec // ok//
+				keyring.Set(keyringService, "nested-role", string(nestedRoleJSON)) //nolint:errcheck,gosec // ok
 			},
 			app: app{
 				config: config{
@@ -1020,7 +1032,11 @@ func TestAppRotateCredentials(t *testing.T) { //nolint:funlen // ok
 			keyring.MockInit()
 			tt.setupFn()
 
-			a := app{iamAPI: tt.mockIAM}
+			a := app{
+				iamAPI:      tt.mockIAM,
+				sleep:       func(context.Context, time.Duration) error { return nil },
+				mkSTSClient: func(aws.CredentialsProvider) stsAPI { return readySTSClient() },
+			}
 
 			err := a.rotateCredentials(t.Context(), tt.profile)
 			if (err != nil) != tt.wantErr {
@@ -1030,7 +1046,160 @@ func TestAppRotateCredentials(t *testing.T) { //nolint:funlen // ok
 	}
 }
 
-func TestAppRun(t *testing.T) { //nolint:funlen // ok
+func TestRotateCredentialsStoreFailureRollsBackNewKey(t *testing.T) { //nolint:funlen // ok
+	keyring.MockInit()
+
+	staticCreds := Creds{
+		Version:         1,
+		AccessKeyID:     "AKIA-OLD",
+		SecretAccessKey: "oldsecret",
+	}
+
+	staticJSON, err := json.Marshal(staticCreds)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	if err = keyring.Set(keyringService, "store-fail", string(staticJSON)); err != nil {
+		t.Fatalf("seed profile: %v", err)
+	}
+
+	origKrSet := krSet
+
+	t.Cleanup(func() { krSet = origKrSet })
+
+	krSet = func(string, string) error {
+		return errors.New("keyring write failed")
+	}
+
+	var deleted []string
+
+	a := app{
+		iamAPI: &mockIAMClient{
+			createAccessKeyFunc: func(context.Context, *iam.CreateAccessKeyInput, ...func(*iam.Options)) (*iam.CreateAccessKeyOutput, error) {
+				return &iam.CreateAccessKeyOutput{
+					AccessKey: &iam_types.AccessKey{
+						AccessKeyId:     aws.String("AKIA-NEW"),
+						SecretAccessKey: aws.String("newsecret"),
+					},
+				}, nil
+			},
+			deleteAccessKeyFunc: func(_ context.Context, input *iam.DeleteAccessKeyInput, _ ...func(*iam.Options)) (*iam.DeleteAccessKeyOutput, error) {
+				deleted = append(deleted, aws.ToString(input.AccessKeyId))
+
+				return &iam.DeleteAccessKeyOutput{}, nil
+			},
+		},
+		sleep:       func(context.Context, time.Duration) error { return nil },
+		mkSTSClient: func(aws.CredentialsProvider) stsAPI { return readySTSClient() },
+	}
+
+	err = a.rotateCredentials(t.Context(), "store-fail")
+	if err == nil {
+		t.Fatal("expected store failure")
+	}
+
+	if len(deleted) != 1 || deleted[0] != "AKIA-NEW" {
+		t.Fatalf("deleted keys = %v, want [AKIA-NEW]", deleted)
+	}
+
+	raw, getErr := keyring.Get(keyringService, "store-fail")
+	if getErr != nil {
+		t.Fatalf("reload profile: %v", getErr)
+	}
+
+	if raw != string(staticJSON) {
+		t.Fatalf("profile mutated after failed store: %s", raw)
+	}
+}
+
+func TestWaitForCredsPropagation(t *testing.T) { //nolint:funlen // ok
+	creds := Creds{AccessKeyID: "AKIA", SecretAccessKey: "secret"}
+
+	t.Run("retries until STS accepts the key", func(t *testing.T) {
+		calls := 0
+		sleeps := 0
+		a := app{
+			sleep: func(context.Context, time.Duration) error {
+				sleeps++
+
+				return nil
+			},
+			mkSTSClient: func(aws.CredentialsProvider) stsAPI {
+				return &mockSTSClient{
+					getCallerIdentityFunc: func(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
+						calls++
+						if calls < 3 {
+							return nil, errors.New("InvalidClientTokenId")
+						}
+
+						return &sts.GetCallerIdentityOutput{}, nil
+					},
+				}
+			},
+		}
+
+		if err := a.waitForCredsPropagation(t.Context(), creds); err != nil {
+			t.Fatalf("waitForCredsPropagation: %v", err)
+		}
+
+		if calls != 3 {
+			t.Fatalf("GetCallerIdentity calls = %d, want 3", calls)
+		}
+
+		if sleeps != 2 {
+			t.Fatalf("sleeps = %d, want 2", sleeps)
+		}
+	})
+
+	t.Run("returns nil after timeout while STS keeps failing", func(t *testing.T) {
+		origTimeout := rotatePropagateTimeout
+
+		t.Cleanup(func() { rotatePropagateTimeout = origTimeout })
+
+		rotatePropagateTimeout = time.Nanosecond
+
+		a := app{
+			sleep: func(context.Context, time.Duration) error { return nil },
+			mkSTSClient: func(aws.CredentialsProvider) stsAPI {
+				return &mockSTSClient{
+					getCallerIdentityFunc: func(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
+						return nil, errors.New("InvalidClientTokenId")
+					},
+				}
+			},
+		}
+
+		if err := a.waitForCredsPropagation(t.Context(), creds); err != nil {
+			t.Fatalf("waitForCredsPropagation: %v", err)
+		}
+	})
+
+	t.Run("surfaces context cancel during wait", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		a := app{
+			sleep: func(context.Context, time.Duration) error {
+				cancel()
+
+				return context.Canceled
+			},
+			mkSTSClient: func(aws.CredentialsProvider) stsAPI {
+				return &mockSTSClient{
+					getCallerIdentityFunc: func(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error) {
+						return nil, errors.New("InvalidClientTokenId")
+					},
+				}
+			},
+		}
+
+		err := a.waitForCredsPropagation(ctx, creds)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	})
+}
+
+func TestAppRun(t *testing.T) { //nolint:funlen,gocognit,cyclop,gocyclo,maintidx // ok
 	staticCreds := Creds{
 		Version:         1,
 		AccessKeyID:     "AKIA123",
@@ -1040,6 +1209,7 @@ func TestAppRun(t *testing.T) { //nolint:funlen // ok
 	tests := []struct {
 		app        app
 		setupFn    func()
+		afterFn    func(*testing.T)
 		mockPrompt func(string, *string) error
 		mockIAM    *mockIAMClient
 		name       string
@@ -1201,7 +1371,9 @@ func TestAppRun(t *testing.T) { //nolint:funlen // ok
 				},
 			},
 			app: app{
-				config: config{AWSProfile: "rotate-profile"},
+				config:      config{AWSProfile: "rotate-profile"},
+				sleep:       func(context.Context, time.Duration) error { return nil },
+				mkSTSClient: func(aws.CredentialsProvider) stsAPI { return readySTSClient() },
 			},
 		},
 		{
@@ -1222,6 +1394,63 @@ func TestAppRun(t *testing.T) { //nolint:funlen // ok
 			},
 			app: app{
 				config: config{AWSProfile: "default"},
+			},
+		},
+		{
+			name: "store overwrite confirmed",
+			args: []string{"awbus", "store"},
+			setupFn: func() {
+				keyring.Set(keyringService, "existing", "old") //nolint:errcheck,gosec // ok
+			},
+			mockPrompt: func(label string, val *string) error {
+				switch label {
+				case "Profile Name (press Enter for 'default')":
+					*val = "existing"
+				case `Profile "existing" exists; overwrite? [y/N]`:
+					*val = "y"
+				case "AccessKeyId":
+					*val = "AKIA-NEW"
+				case "SecretAccessKey":
+					*val = "newsecret"
+				}
+
+				return nil
+			},
+			app: app{
+				config: config{AWSProfile: "default"},
+			},
+		},
+		{
+			name: "store overwrite aborted",
+			args: []string{"awbus", "store"},
+			setupFn: func() {
+				keyring.Set(keyringService, "keep-me", "old-value") //nolint:errcheck,gosec // ok
+			},
+			mockPrompt: func(label string, val *string) error {
+				switch label {
+				case "Profile Name (press Enter for 'default')":
+					*val = "keep-me"
+				case `Profile "keep-me" exists; overwrite? [y/N]`:
+					*val = "n"
+				}
+
+				return nil
+			},
+			app: app{
+				config: config{AWSProfile: "default"},
+			},
+			wantErr: true,
+			afterFn: func(t *testing.T) {
+				t.Helper()
+
+				got, err := keyring.Get(keyringService, "keep-me")
+				if err != nil {
+					t.Fatalf("get keep-me: %v", err)
+				}
+
+				if got != "old-value" {
+					t.Fatalf("profile overwritten on abort: %q", got)
+				}
 			},
 		},
 		{
@@ -1255,6 +1484,35 @@ func TestAppRun(t *testing.T) { //nolint:funlen // ok
 			},
 			app: app{
 				config: config{AWSProfile: "delete-me"},
+			},
+			afterFn: func(t *testing.T) {
+				t.Helper()
+
+				if _, err := keyring.Get(keyringService, "delete-me"); err == nil {
+					t.Fatal("expected delete-me to be removed")
+				}
+			},
+		},
+		{
+			name: "delete command with y",
+			args: []string{"awbus", "delete"},
+			setupFn: func() {
+				keyring.Set(keyringService, "delete-y", "test-data") //nolint:errcheck,gosec // ok
+			},
+			mockPrompt: func(_ string, val *string) error {
+				*val = "y"
+
+				return nil
+			},
+			app: app{
+				config: config{AWSProfile: "delete-y"},
+			},
+			afterFn: func(t *testing.T) {
+				t.Helper()
+
+				if _, err := keyring.Get(keyringService, "delete-y"); err == nil {
+					t.Fatal("expected delete-y to be removed")
+				}
 			},
 		},
 		{
@@ -1312,12 +1570,26 @@ func TestAppRun(t *testing.T) { //nolint:funlen // ok
 			setupFn: func() {
 				keyring.Set(keyringService, "abort-delete", "test-data") //nolint:errcheck,gosec // ok
 			},
-			mockPrompt: func(label string, val *string) error {
+			mockPrompt: func(_ string, val *string) error {
 				*val = "abort"
+
 				return nil
 			},
 			app: app{
 				config: config{AWSProfile: "abort-delete"},
+			},
+			wantErr: true,
+			afterFn: func(t *testing.T) {
+				t.Helper()
+
+				got, err := keyring.Get(keyringService, "abort-delete")
+				if err != nil {
+					t.Fatalf("profile should remain: %v", err)
+				}
+
+				if got != "test-data" {
+					t.Fatalf("profile mutated on abort: %q", got)
+				}
 			},
 		},
 		{
@@ -1404,8 +1676,115 @@ func TestAppRun(t *testing.T) { //nolint:funlen // ok
 			if (err != nil) != tt.wantErr {
 				t.Errorf("run() error = %v, wantErr %v", err, tt.wantErr)
 			}
+
+			if tt.afterFn != nil {
+				tt.afterFn(t)
+			}
 		})
 	}
+}
+
+func TestConfirmProfileDelete(t *testing.T) {
+	t.Run("empty enter confirms", func(t *testing.T) {
+		a := app{prompt: func(string, *string) error {
+			return errors.New("EOF")
+		}}
+
+		if !a.confirmProfileDelete("p") {
+			t.Fatal("want confirm")
+		}
+	})
+
+	t.Run("y confirms without mutating AWSProfile", func(t *testing.T) {
+		a := app{
+			AWSProfile: "keep-name",
+			prompt: func(_ string, val *string) error {
+				*val = "yes"
+
+				return nil
+			},
+		}
+
+		if !a.confirmProfileDelete(a.AWSProfile) {
+			t.Fatal("want confirm")
+		}
+
+		if a.AWSProfile != "keep-name" {
+			t.Fatalf("AWSProfile mutated to %q", a.AWSProfile)
+		}
+	})
+
+	t.Run("other input aborts", func(t *testing.T) {
+		a := app{
+			AWSProfile: "keep-name",
+			prompt: func(_ string, val *string) error {
+				*val = "nope"
+
+				return nil
+			},
+		}
+
+		if a.confirmProfileDelete(a.AWSProfile) {
+			t.Fatal("want abort")
+		}
+
+		if a.AWSProfile != "keep-name" {
+			t.Fatalf("AWSProfile mutated to %q", a.AWSProfile)
+		}
+	})
+}
+
+func TestConfirmProfileOverwrite(t *testing.T) {
+	keyring.MockInit()
+
+	t.Run("absent profile is ok without prompting", func(t *testing.T) {
+		a := app{prompt: func(string, *string) error {
+			t.Fatal("prompt should not be called")
+
+			return nil
+		}}
+
+		ok, err := a.confirmProfileOverwrite("missing")
+		if err != nil || !ok {
+			t.Fatalf("ok=%v err=%v, want ok=true err=nil", ok, err)
+		}
+	})
+
+	t.Run("existing profile requires y", func(t *testing.T) {
+		keyring.MockInit()
+
+		if err := keyring.Set(keyringService, "there", "x"); err != nil {
+			t.Fatal(err)
+		}
+
+		a := app{prompt: func(_ string, val *string) error {
+			*val = "yes"
+
+			return nil
+		}}
+
+		ok, err := a.confirmProfileOverwrite("there")
+		if err != nil || !ok {
+			t.Fatalf("ok=%v err=%v, want ok=true err=nil", ok, err)
+		}
+	})
+
+	t.Run("empty answer aborts", func(t *testing.T) {
+		keyring.MockInit()
+
+		if err := keyring.Set(keyringService, "there", "x"); err != nil {
+			t.Fatal(err)
+		}
+
+		a := app{prompt: func(string, *string) error {
+			return errors.New("EOF")
+		}}
+
+		ok, err := a.confirmProfileOverwrite("there")
+		if err != nil || ok {
+			t.Fatalf("ok=%v err=%v, want ok=false err=nil", ok, err)
+		}
+	})
 }
 
 func TestMain(t *testing.T) {
@@ -1544,6 +1923,15 @@ func TestPrompt(t *testing.T) {
 			input:   "\n",
 			wantErr: true,
 		},
+		{
+			// Non-TTY stdin falls back to Scanln even for secret labels, so
+			// piped automation and tests keep working; echo suppression only
+			// kicks in when stdin is a real terminal.
+			name:    "secret label on pipe still reads a line",
+			label:   "SecretAccessKey",
+			input:   "s3cret\n",
+			wantVal: "s3cret",
+		},
 	}
 
 	for _, tt := range tests {
@@ -1578,5 +1966,66 @@ func TestPrompt(t *testing.T) {
 				t.Errorf("prompt() result = %s, want %s", result, tt.wantVal)
 			}
 		})
+	}
+}
+
+func TestIsSecretLabel(t *testing.T) {
+	tests := []struct {
+		label string
+		want  bool
+	}{
+		{label: "SecretAccessKey", want: true},
+		{label: "Secret", want: true},
+		{label: "Password for alice", want: true},
+		{label: "AccessKeyId", want: false},
+		{label: "Username", want: false},
+		{label: "Profile Name", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.label, func(t *testing.T) {
+			if got := isSecretLabel(tt.label); got != tt.want {
+				t.Fatalf("isSecretLabel(%q) = %v, want %v", tt.label, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestPutReadsStdinWithoutDevPath(t *testing.T) {
+	keyring.MockInit()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+
+	oldStdin := os.Stdin
+
+	t.Cleanup(func() {
+		os.Stdin = oldStdin
+
+		r.Close() //nolint:errcheck,gosec // ok
+	})
+
+	os.Stdin = r
+
+	go func() {
+		defer w.Close() //nolint:errcheck // ok
+
+		w.WriteString("piped-secret\n") //nolint:errcheck,gosec // ok
+	}()
+
+	a := app{}
+	if err = a.run(t.Context(), []string{"awbus", "put", "svc", "user"}); err != nil {
+		t.Fatalf("run put: %v", err)
+	}
+
+	got, err := keyring.Get("svc", "user")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if got != "piped-secret" {
+		t.Fatalf("secret = %q, want piped-secret (newline trimmed)", got)
 	}
 }

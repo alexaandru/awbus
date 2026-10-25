@@ -61,10 +61,10 @@ Commands:
 | Command                | Description                                                                    |
 | ---------------------- | ------------------------------------------------------------------------------ |
 | `load` (default)       | 🔐 Load+display credentials for current (AWS_PROFILE) profile                  |
-| `store`                | 💾 Store static AWS credentials (interactive)                                  |
-| `store-assume`         | 🎭 Store assumed role configuration (interactive)                              |
-| `rotate`               | 🔄 Rotate static credentials (create new, delete old)                          |
-| `delete`               | 🗑️ Delete profile from keyring (interactive)                                   |
+| `store`                | 💾 Store static AWS credentials (interactive; confirms overwrite)              |
+| `store-assume`         | 🎭 Store assumed role configuration (interactive; confirms overwrite)          |
+| `rotate`               | 🔄 Rotate static credentials (create new, delete old; polls until IAM accepts the new key) |
+| `delete`               | 🗑️ Delete profile from keyring (interactive; Enter/y to confirm)               |
 | `sts-url`              | 🔏 Cached, auto-refreshed presigned STS `GetCallerIdentity` URL                |
 | `jwt`                  | 🪪 Cached, auto-refreshed Cognito User Pool JWT (auto-provisions on first use) |
 | `jwt-add-user`         | ➕ Register an additional existing Cognito user with the pool (interactive)    |

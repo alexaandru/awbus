@@ -10,9 +10,11 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"runtime/debug"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -22,11 +24,12 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
 	"github.com/zalando/go-keyring"
+	"golang.org/x/term"
 
 	"github.com/alexaandru/confetti"
 )
 
-type Creds struct { //nolint:govet // ok//nolint:govet // ok
+type Creds struct { //nolint:govet // ok
 	Version int `json:"Version"` // Always 1.
 
 	AccessKeyID     string    `json:"AccessKeyId,omitempty"`
@@ -46,6 +49,7 @@ type app struct { //nolint:govet // ok
 	iamAPI
 
 	prompt          func(label string, val *string) error
+	sleep           func(context.Context, time.Duration) error
 	mkSTSClient     func(aws.CredentialsProvider) stsAPI
 	mkPresignClient func(aws.CredentialsProvider) stsPresignAPI
 	mkCognitoClient func() cognitoIdpAPI
@@ -54,6 +58,8 @@ type app struct { //nolint:govet // ok
 //nolint:inamedparam // ok
 type stsAPI interface {
 	AssumeRole(context.Context, *sts.AssumeRoleInput, ...func(*sts.Options)) (*sts.AssumeRoleOutput, error)
+	//nolint:lll // ok
+	GetCallerIdentity(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error)
 }
 
 //nolint:inamedparam,lll // ok
@@ -109,6 +115,13 @@ const (
 	stsURLAssumedTTL = 15 * time.Minute
 )
 
+// IAM access keys are eventually consistent. After rotate we poll STS
+// GetCallerIdentity with the new key until it works (or we hit the cap).
+// Vars (not consts) so tests can shrink the window without sleeping 30s.
+var rotatePropagateInterval = 50 * time.Millisecond //nolint:gochecknoglobals // ok
+
+var rotatePropagateTimeout = 30 * time.Second //nolint:gochecknoglobals // ok
+
 //go:embed help.txt
 var help string
 
@@ -129,6 +142,19 @@ var durationFromJS = json.UnmarshalFunc(func(data []byte, d *time.Duration) (err
 	return
 })
 
+// Package-level keyring helpers (overridable in tests).
+var krGet = func(profile string) (string, error) { //nolint:gochecknoglobals // ok
+	return keyring.Get(keyringService, profile)
+}
+
+var krSet = func(profile, value string) error { //nolint:gochecknoglobals // ok
+	return keyring.Set(keyringService, profile, value)
+}
+
+var krDel = func(profile string) error { //nolint:gochecknoglobals // ok
+	return keyring.Delete(keyringService, profile)
+}
+
 func newApp(iamClient iamAPI) (a app, err error) {
 	if err = confetti.Load(&a.config, confetti.WithEnv("")); err != nil {
 		return
@@ -136,6 +162,7 @@ func newApp(iamClient iamAPI) (a app, err error) {
 
 	a.iamAPI = iamClient
 	a.prompt = prompt
+	a.sleep = sleepCtx
 	a.SessionTTL = cmp.Or(a.SessionTTL, defaultSessionTTL)
 	a.SkewPad = cmp.Or(a.SkewPad, defaultSkewPad)
 	a.AWSProfile = cmp.Or(a.AWSProfile, defaultProfileName)
@@ -166,18 +193,6 @@ func (a *app) ensureIAMClient(ctx context.Context) (err error) {
 	a.iamAPI = iam.NewFromConfig(cfg)
 
 	return
-}
-
-func krGet(profile string) (string, error) {
-	return keyring.Get(keyringService, profile)
-}
-
-func krSet(profile, value string) error {
-	return keyring.Set(keyringService, profile, value)
-}
-
-func krDel(profile string) error {
-	return keyring.Delete(keyringService, profile)
 }
 
 func (c *Creds) load(name string) (err error) {
@@ -387,16 +402,100 @@ func (a *app) rotateCredentials(ctx context.Context, profileName string) (err er
 
 	newAccessKey := resp.AccessKey
 	oldAccessKeyID := c.AccessKeyID
-	c.AccessKeyID = *newAccessKey.AccessKeyId
-	c.SecretAccessKey = *newAccessKey.SecretAccessKey
+	// Clone out of the SDK response: aws.ToString shares the backing array, and
+	// later IAM calls can reuse that buffer — leaving c.SecretAccessKey corrupted
+	// while the keyring copy from store() stays correct (exactly the "poll fails
+	// for N seconds, then aws works instantly" failure mode).
+	c.AccessKeyID = strings.Clone(aws.ToString(newAccessKey.AccessKeyId))
+	c.SecretAccessKey = strings.Clone(aws.ToString(newAccessKey.SecretAccessKey))
+	c.SessionToken = ""
+
+	newKeyID := c.AccessKeyID
 
 	if err = c.store(profileName); err != nil {
+		// IAM allows only 2 keys per user; roll back the new key so a failed
+		// store cannot leave an orphan that blocks the next rotate.
+		if _, delErr := a.DeleteAccessKey(ctx, &iam.DeleteAccessKeyInput{
+			AccessKeyId: &newKeyID,
+		}); delErr != nil {
+			return fmt.Errorf("store new credentials: %w",
+				errors.Join(err, fmt.Errorf("delete orphaned key %s: %w", newKeyID, delErr)))
+		}
+
 		return fmt.Errorf("store new credentials: %w", err)
 	}
 
-	_, err = a.DeleteAccessKey(ctx, &iam.DeleteAccessKeyInput{AccessKeyId: &oldAccessKeyID})
+	if _, err = a.DeleteAccessKey(ctx, &iam.DeleteAccessKeyInput{AccessKeyId: &oldAccessKeyID}); err != nil {
+		return fmt.Errorf(
+			"delete old access key %s (new key is stored; delete the old key in IAM to stay under the 2-key limit): %w",
+			oldAccessKeyID, err,
+		)
+	}
 
-	return
+	// Poll with what credential_process will actually serve, not the in-memory view.
+	var stored Creds
+	if err = stored.load(profileName); err != nil {
+		return fmt.Errorf("reload rotated profile %q: %w", profileName, err)
+	}
+
+	return a.waitForCredsPropagation(ctx, stored)
+}
+
+// waitForCredsPropagation polls STS GetCallerIdentity with c until IAM accepts
+// the key, or rotatePropagateTimeout elapses (warns on stderr; does not fail
+// the rotate — the keyring already holds the new credentials).
+func (a *app) waitForCredsPropagation(ctx context.Context, c Creds) (err error) {
+	sleep := a.sleep
+	if sleep == nil {
+		sleep = sleepCtx
+	}
+
+	mk := a.mkSTSClient
+	if mk == nil {
+		mk = func(creds aws.CredentialsProvider) stsAPI {
+			return sts.New(sts.Options{Credentials: creds, Region: a.AWSRegion})
+		}
+	}
+
+	svc := mk(credsProvider(c))
+	deadline := time.Now().Add(rotatePropagateTimeout)
+
+	fmt.Fprintln(os.Stderr, "awbus: rotated; waiting for IAM to accept the new access key...")
+
+	var lastErr error
+
+	for {
+		if _, lastErr = svc.GetCallerIdentity(ctx, &sts.GetCallerIdentityInput{}); lastErr == nil {
+			return
+		}
+
+		if err = ctx.Err(); err != nil {
+			return fmt.Errorf("wait for IAM propagation: %w", err)
+		}
+
+		if !time.Now().Before(deadline) {
+			fmt.Fprintf(os.Stderr, "awbus: warning: new access key not usable after %s: %v\n",
+				rotatePropagateTimeout, lastErr)
+
+			return
+		}
+
+		if err = sleep(ctx, rotatePropagateInterval); err != nil {
+			return fmt.Errorf("wait for IAM propagation: %w", err)
+		}
+	}
+}
+
+func sleepCtx(ctx context.Context, d time.Duration) (err error) {
+	t := time.NewTimer(d)
+	defer t.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
 }
 
 //nolint:gocognit,cyclop,funlen,nakedret,gocyclo // ok
@@ -484,10 +583,19 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 		var (
 			c       Creds
 			profile string
+			ok      bool
 		)
 
 		if err = a.prompt("Profile Name (press Enter for '"+a.AWSProfile+"')", &profile); err != nil {
 			profile = a.AWSProfile
+		}
+
+		if ok, err = a.confirmProfileOverwrite(profile); err != nil || !ok {
+			if err == nil {
+				err = fmt.Errorf("aborted: profile %q already exists", profile)
+			}
+
+			break
 		}
 
 		if cmd == "store-assume" { //nolint:nestif // ok
@@ -510,10 +618,12 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 
 		err = c.store(profile)
 	case "delete":
-		if err = a.prompt("Deleting profile (press Enter to delete '"+a.AWSProfile+"', "+
-			"press anything else to abort)", &a.AWSProfile); err != nil {
-			err = krDel(a.AWSProfile)
+		if !a.confirmProfileDelete(a.AWSProfile) {
+			err = fmt.Errorf("aborted: profile %q not deleted", a.AWSProfile)
+			break
 		}
+
+		err = krDel(a.AWSProfile)
 	case "version":
 		fmt.Println(keyringService, version)
 	case "get":
@@ -547,9 +657,12 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 		)
 
 		if stat, err = os.Stdin.Stat(); err == nil && (stat.Mode()&os.ModeCharDevice) == 0 {
-			if input, err = os.ReadFile("/dev/stdin"); err == nil {
-				secret = string(input)
+			if input, err = io.ReadAll(os.Stdin); err != nil {
+				err = fmt.Errorf("read secret from stdin: %w", err)
+				break
 			}
+
+			secret = strings.TrimRight(string(input), "\r\n")
 		}
 
 		if err = a.promptIfEmpty("Service", &service); err != nil {
@@ -574,8 +687,31 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 	return
 }
 
+func isSecretLabel(label string) bool {
+	l := strings.ToLower(label)
+
+	return strings.Contains(l, "secret") || strings.Contains(l, "password")
+}
+
 func prompt(label string, val *string) (err error) {
 	fmt.Print("Enter ", label, ": ")
+
+	fd := int(os.Stdin.Fd())
+	if isSecretLabel(label) && term.IsTerminal(fd) {
+		var b []byte
+
+		b, err = term.ReadPassword(fd)
+
+		fmt.Println()
+
+		if err != nil {
+			return fmt.Errorf("read %s: %w", label, err)
+		}
+
+		*val = string(b)
+
+		return
+	}
 
 	if _, err = fmt.Scanln(val); err != nil {
 		return fmt.Errorf("read %s: %w", label, err)
@@ -590,6 +726,47 @@ func (a *app) promptIfEmpty(label string, val *string) (err error) {
 	}
 
 	return
+}
+
+// confirmProfileOverwrite returns ok=true when profile is absent or the user
+// answers y/yes. Empty / anything else aborts (ok=false, err=nil).
+func (a *app) confirmProfileOverwrite(profile string) (ok bool, err error) {
+	if _, err = krGet(profile); errors.Is(err, keyring.ErrNotFound) {
+		return true, nil
+	}
+
+	if err != nil {
+		return false, fmt.Errorf("check existing profile %q: %w", profile, err)
+	}
+
+	var answer string
+
+	if promptErr := a.prompt(fmt.Sprintf("Profile %q exists; overwrite? [y/N]", profile), &answer); promptErr != nil {
+		// Empty Enter from Scanln surfaces as an error — treat as "no".
+		return false, nil //nolint:nilerr // ok
+	}
+
+	answer = strings.ToLower(strings.TrimSpace(answer))
+
+	return answer == "y" || answer == "yes", nil
+}
+
+// confirmProfileDelete reports whether the user confirmed with Enter or y/yes.
+// The answer is never written into a.AWSProfile.
+func (a *app) confirmProfileDelete(profile string) bool {
+	var answer string
+
+	if err := a.prompt(
+		fmt.Sprintf("Delete profile %q? [Enter/y to confirm]", profile),
+		&answer,
+	); err != nil {
+		// Empty Enter from Scanln surfaces as an error — treat as confirm.
+		return true
+	}
+
+	answer = strings.ToLower(strings.TrimSpace(answer))
+
+	return answer == "y" || answer == "yes"
 }
 
 func die(msg string, err error) {

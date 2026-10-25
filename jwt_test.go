@@ -21,7 +21,7 @@ func (m *mockCognitoClient) InitiateAuth(ctx context.Context, input *cip.Initiat
 	return m.initiateAuthFunc(ctx, input, opts...)
 }
 
-func TestResolveCognitoUser(t *testing.T) { //nolint:funlen,gocognit // ok
+func TestResolveCognitoUser(t *testing.T) { //nolint:funlen,gocognit,cyclop // ok
 	tests := []struct {
 		promptFn     func(t *testing.T) func(string, *string) error
 		name         string
@@ -189,6 +189,42 @@ func TestResolveCognitoUser(t *testing.T) { //nolint:funlen,gocognit // ok
 			wantChanged:  true,
 			wantDefault:  "erin",
 		},
+		{
+			name:     "prompted dash is rejected instead of recursing",
+			userFlag: "-",
+			promptFn: func(t *testing.T) func(string, *string) error {
+				t.Helper()
+
+				return func(label string, val *string) error {
+					if label != "Username" {
+						t.Fatalf("unexpected prompt label %q", label)
+					}
+
+					*val = "-"
+
+					return nil
+				}
+			},
+			wantErr: `username must not be empty or "-"`,
+		},
+		{
+			name:     "prompted empty username is rejected instead of recursing",
+			userFlag: "-",
+			promptFn: func(t *testing.T) func(string, *string) error {
+				t.Helper()
+
+				return func(label string, val *string) error {
+					if label != "Username" {
+						t.Fatalf("unexpected prompt label %q", label)
+					}
+
+					*val = ""
+
+					return nil
+				}
+			},
+			wantErr: `username must not be empty or "-"`,
+		},
 	}
 
 	for _, tt := range tests {
@@ -239,6 +275,7 @@ func TestAppJWT(t *testing.T) { //nolint:funlen,gocognit,cyclop // ok
 	tests := []struct {
 		cognito   func(t *testing.T) *mockCognitoClient
 		setupFn   func(t *testing.T)
+		afterFn   func(t *testing.T)
 		prompt    func(string, *string) error
 		name      string
 		userFlag  string
@@ -348,6 +385,18 @@ func TestAppJWT(t *testing.T) { //nolint:funlen,gocognit,cyclop // ok
 				}}
 			},
 			wantToken: "refreshed-id",
+			afterFn: func(t *testing.T) {
+				t.Helper()
+
+				var stored jwtCache
+				if err := stored.load("p/pool1/client1/alice"); err != nil {
+					t.Fatalf("reload cache: %v", err)
+				}
+
+				if stored.RefreshToken != "refresh-tok" {
+					t.Fatalf("RefreshToken = %q, want refresh-tok preserved after refresh", stored.RefreshToken)
+				}
+			},
 		},
 		{
 			name: "stale cache with rejected refresh token falls back to password auth",
@@ -526,6 +575,10 @@ func TestAppJWT(t *testing.T) { //nolint:funlen,gocognit,cyclop // ok
 
 			if got != tt.wantToken {
 				t.Errorf("jwt() = %q, want %q", got, tt.wantToken)
+			}
+
+			if tt.afterFn != nil {
+				tt.afterFn(t)
 			}
 		})
 	}
@@ -706,6 +759,17 @@ func TestAppSetDefaultCognitoUser(t *testing.T) { //nolint:funlen // ok
 			setupFn:  func(t *testing.T) { t.Helper(); setCognitoPool(t, "p", basePool) },
 			prompt: func(string, *string) error {
 				return errors.New("aborted")
+			},
+			wantErr: true,
+		},
+		{
+			name:     "prompted dash is rejected instead of recursing",
+			userFlag: "-",
+			setupFn:  func(t *testing.T) { t.Helper(); setCognitoPool(t, "p", basePool) },
+			prompt: func(_ string, val *string) error {
+				*val = "-"
+
+				return nil
 			},
 			wantErr: true,
 		},

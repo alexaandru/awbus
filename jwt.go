@@ -135,8 +135,7 @@ func resolveCognitoUser(pool *CognitoPool, userFlag string, promptFn func(string
 	if userFlag == "-" || userFlag == "" {
 		var typed string
 
-		if err = promptFn("Username", &typed); err != nil {
-			err = fmt.Errorf("prompt username: %w", err)
+		if typed, err = promptCognitoUsername(promptFn); err != nil {
 			return
 		}
 
@@ -149,6 +148,19 @@ func resolveCognitoUser(pool *CognitoPool, userFlag string, promptFn func(string
 	}
 
 	return newCognitoUser(pool, userFlag, promptFn)
+}
+
+func promptCognitoUsername(promptFn func(string, *string) error) (username string, err error) {
+	if err = promptFn("Username", &username); err != nil {
+		err = fmt.Errorf("prompt username: %w", err)
+		return
+	}
+
+	if username == "" || username == "-" {
+		err = errors.New(`username must not be empty or "-"`)
+	}
+
+	return
 }
 
 // matchCognitoUser looks up userFlag against pool's stored users: an exact
@@ -192,8 +204,7 @@ func findCognitoUser(pool *CognitoPool, userFlag string, promptFn func(string, *
 	if userFlag == "" || userFlag == "-" {
 		var typed string
 
-		if err = promptFn("Username", &typed); err != nil {
-			err = fmt.Errorf("prompt username: %w", err)
+		if typed, err = promptCognitoUsername(promptFn); err != nil {
 			return
 		}
 
@@ -289,15 +300,15 @@ func (a *app) resolveJWTForUser(ctx context.Context, key string, pool CognitoPoo
 
 	//nolint:nestif // ok
 	if cache.RefreshToken != "" {
+		// Cognito's refresh flow does not return a new refresh token; keep the
+		// existing one in memory so a failed keyring re-read cannot wipe it.
+		oldRefresh := cache.RefreshToken
+
 		if cache, err = a.initiateAuth(ctx, svc, pool, types.AuthFlowTypeRefreshTokenAuth, map[string]string{
-			"REFRESH_TOKEN": cache.RefreshToken,
+			"REFRESH_TOKEN": oldRefresh,
 		}, now); err == nil {
-			cache.RefreshToken = ""
-
-			var stale jwtCache
-
-			if e := stale.load(key); e == nil {
-				cache.RefreshToken = stale.RefreshToken
+			if cache.RefreshToken == "" {
+				cache.RefreshToken = oldRefresh
 			}
 
 			if err = cache.store(key); err != nil {

@@ -14,7 +14,8 @@ import (
 )
 
 type mockSTSClient struct {
-	assumeRoleFunc func(context.Context, *sts.AssumeRoleInput, ...func(*sts.Options)) (*sts.AssumeRoleOutput, error)
+	assumeRoleFunc        func(context.Context, *sts.AssumeRoleInput, ...func(*sts.Options)) (*sts.AssumeRoleOutput, error)
+	getCallerIdentityFunc func(context.Context, *sts.GetCallerIdentityInput, ...func(*sts.Options)) (*sts.GetCallerIdentityOutput, error)
 }
 
 type mockPresignClient struct {

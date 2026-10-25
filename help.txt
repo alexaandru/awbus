@@ -44,10 +44,15 @@ FLAGS
 
 COMMANDS
     load (default)    Load and return credentials for current profile
-    store             Store static AWS credentials (interactive)
-    store-assume      Store assumed role configuration (interactive)
-    rotate            Rotate static credentials (create new, delete old)
-    delete            Delete profile from keyring (interactive)
+    store             Store static AWS credentials (interactive).
+                      Confirms before overwriting an existing profile.
+    store-assume      Store assumed role configuration (interactive).
+                      Confirms before overwriting an existing profile.
+    rotate            Rotate static credentials (create new, delete old).
+                      Polls STS GetCallerIdentity with the new key until IAM
+                      accepts it (50ms interval, 30s cap) before exiting.
+    delete            Delete profile from keyring (interactive).
+                      Confirms with Enter or y; does not change -profile.
     sts-url           Return a cached, auto-refreshed presigned STS
                       GetCallerIdentity URL for current profile
     jwt               Return a cached, auto-refreshed Cognito User Pool
@@ -99,8 +104,14 @@ CREDENTIAL TYPES
         Useful for SSH keys, API tokens, database URLs, etc.
 
 KEYRING STORAGE
-    Service: "awbus"
-    Username: "<profile-name>"
+    Four keyring services (deliberately non-colliding):
+      "awbus"           AWS profiles / Creds (username = profile name)
+      "awbus-sts-url"   Presigned STS URL cache (username = profile name)
+      "awbus-cognito"   Cognito pool config + users (username = pool name)
+      "awbus-jwt"       Cognito JWT token cache (username = pool/user key)
+    Generic put/get use arbitrary caller-supplied service names.
+
+    AWS profile entry ("awbus" / "<profile-name>"):
     Password: JSON credential object
 
     Static Credential JSON:
@@ -167,6 +178,7 @@ WORKFLOW
     3. Configure AWS profile with credential_process pointing to awbus;
     4. Use AWS CLI/SDK normally - awbus handles credential retrieval;
     5. For assumed roles, awbus automatically refreshes sessions before expiration.
+    6. 'awbus rotate' polls until the new access key works (or 30s) before exiting.
 
 GENERIC KEYRING COMMANDS
 

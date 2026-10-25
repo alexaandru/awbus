@@ -35,7 +35,7 @@ linters:
     exhaustive:
       check:
         - switch
-        - map
+        - mapliteral
       default-signifies-exhaustive: true
     forbidigo:
       forbid:
@@ -104,8 +104,6 @@ linters:
         - error
         - stdlib
         - generic
-        - valkey.Client
-        - valkey-go.Client
     lll:
       # line-length:
       tab-width: 1
