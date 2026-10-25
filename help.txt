@@ -64,8 +64,21 @@ COMMANDS
     jwt-set-default-user
                       Set the default user to the one -user resolves to
                       (errors if it matches no stored user)
-    get               Get arbitrary secret from keyring: awbus get <service> <username>
-    put               Store arbitrary secret in keyring: awbus put [service] [username]
+    get               Get a generic secret: awbus get <kind> <name>
+                      Reads awbus-generic first, then legacy (kind, name).
+    put               Store a generic secret: awbus put [kind] [name]
+                      Always writes awbus-generic (kind/name); drops legacy.
+    list              List usernames in all awbus* keyring services (grouped)
+    list-profiles     List AWS profile names (service awbus)
+    list-sts-url      List STS URL cache entries (service awbus-sts-url)
+    list-cognito      List Cognito pool names (service awbus-cognito)
+    list-jwt          List JWT cache keys (service awbus-jwt)
+    list-generic      List generic secrets as kind/name (service awbus-generic)
+    migrate           Scan shell config for `awbus get`, confirm, and move
+                      legacy generics into awbus-generic. Extra file/dir args
+                      are scanned in addition to SHELL/ZDOTDIR defaults.
+                      Dynamic names (`awbus get ssh $i`) migrate every legacy
+                      user under that static kind via ListUsers.
     version           Show version
     help              Show this help message
 
@@ -104,12 +117,14 @@ CREDENTIAL TYPES
         Useful for SSH keys, API tokens, database URLs, etc.
 
 KEYRING STORAGE
-    Four keyring services (deliberately non-colliding):
+    Five keyring services (deliberately non-colliding):
       "awbus"           AWS profiles / Creds (username = profile name)
       "awbus-sts-url"   Presigned STS URL cache (username = profile name)
       "awbus-cognito"   Cognito pool config + users (username = pool name)
       "awbus-jwt"       Cognito JWT token cache (username = pool/user key)
-    Generic put/get use arbitrary caller-supplied service names.
+      "awbus-generic"   Arbitrary secrets (username = "<kind>/<name>")
+    CLI remains `get|put <kind> <name>`; storage is always under awbus-generic.
+    `get` still falls back to the legacy (kind, name) keyring pair.
 
     AWS profile entry ("awbus" / "<profile-name>"):
     Password: JSON credential object
@@ -182,16 +197,21 @@ WORKFLOW
 
 GENERIC KEYRING COMMANDS
 
-    get <service> <username>    Retrieve any secret from keyring
-    put [service] [username]    Store any secret in keyring
-                               - Service and username can be provided as arguments
+    get <kind> <name>           Retrieve a secret (awbus-generic, else legacy)
+    put [kind] [name]           Store under awbus-generic as kind/name
+                               - Kind and name can be provided as arguments
                                - Secret read from stdin (secure) or prompted interactively
-                               - Missing service/username will be prompted
+                               - Missing kind/name will be prompted
+                               - Never pass secrets as command arguments!
+    list / list-*               List keyring usernames (never prints secret values)
+    migrate [paths...]          Find `awbus get` in shell configs and migrate
 
     Examples:
         awbus put myapp myuser                    # Prompts for secret
         get_my_secret.sh | awbus put myapp myuser # Secret from stdin (secure)
         awbus put                                 # Prompts for all values
+        awbus list-generic
+        awbus migrate ~/.zshrc ~/Personal/Config/zsh
 
 PRESIGNED STS URL EXAMPLE
 

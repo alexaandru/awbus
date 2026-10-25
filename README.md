@@ -69,13 +69,17 @@ Commands:
 | `jwt`                  | 🪪 Cached, auto-refreshed Cognito User Pool JWT (auto-provisions on first use) |
 | `jwt-add-user`         | ➕ Register an additional existing Cognito user with the pool (interactive)    |
 | `jwt-set-default-user` | 🎯 Set the pool's default Cognito user                                         |
-| `get`                  | 🔍 Get arbitrary secret: `awbus get <service> <username>`                      |
-| `put`                  | 💾 Store arbitrary secret: `awbus put [service] [username]`                    |
+| `get`                  | 🔍 Get generic secret: `awbus get <kind> <name>` (awbus-generic, else legacy)  |
+| `put`                  | 💾 Store generic secret under `awbus-generic` as `kind/name`                   |
+| `list` / `list-*`      | 📋 List keyring usernames (profiles, sts-url, cognito, jwt, generic)           |
+| `migrate`              | 🚚 Scan shell configs for `awbus get`, confirm, migrate into awbus-generic     |
 | `version`              | ℹ️ Show version                                                                |
 | `help`                 | ❓ Show detailed help                                                          |
 
-The `store[-assume]`/`load` pairs work on **AWS profiles** while `put`/`get` work on **generic** (arbitrary)
-**secrets**:
+The `store[-assume]`/`load` pairs work on **AWS profiles** while `put`/`get` work on **generic**
+**secrets** (stored under keyring service `awbus-generic` as `kind/name`; `get` still falls back to
+the legacy `(kind, name)` pair). Use `awbus list` / `list-*` to list usernames, and `awbus migrate`
+to move legacy generics into `awbus-generic` after scanning shell configs.
 
 ```bash
 awbus put myapp myuser # Store a secret (prompts for secret securely)
@@ -83,6 +87,8 @@ awbus put              # OR prompt for all missing values: app/service, user and
 cat secret.txt | awbus put myapp myuser # OR pass secret to stdin
 
 awbus get myapp myuser # Retrieve the secret
+awbus list-generic
+awbus migrate          # or: awbus migrate ~/Personal/Config/zsh
 ```
 
 **Security Note**: Secrets are never accepted as command line arguments to prevent exposure in shell history or process lists.

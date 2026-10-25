@@ -1593,12 +1593,60 @@ func TestAppRun(t *testing.T) { //nolint:funlen,gocognit,cyclop,gocyclo,maintidx
 			},
 		},
 		{
-			name: "get command success",
+			name: "get command success legacy fallback",
 			args: []string{"awbus", "get", "testservice", "testuser"},
 			setupFn: func() {
 				keyring.Set("testservice", "testuser", "secret-value") //nolint:errcheck,gosec // ok
 			},
 			app: app{},
+		},
+		{
+			name: "get command success from awbus-generic",
+			args: []string{"awbus", "get", "testservice", "testuser"},
+			setupFn: func() {
+				keyring.Set(genericKeyringService, "testservice/testuser", "secret-value") //nolint:errcheck,gosec // ok
+			},
+			app: app{},
+		},
+		{
+			name: "list-generic command",
+			args: []string{"awbus", "list-generic"},
+			setupFn: func() {
+				keyring.Set(genericKeyringService, "openai/me@x.com", "tok") //nolint:errcheck,gosec // ok
+			},
+			app: app{},
+		},
+		{
+			name: "list command",
+			args: []string{"awbus", "list"},
+			setupFn: func() {
+				keyring.Set(keyringService, "prof", "{}") //nolint:errcheck,gosec // ok
+			},
+			app: app{},
+		},
+		{
+			name:    "list-profiles command",
+			args:    []string{"awbus", "list-profiles"},
+			setupFn: func() {},
+			app:     app{},
+		},
+		{
+			name:    "list-sts-url command",
+			args:    []string{"awbus", "list-sts-url"},
+			setupFn: func() {},
+			app:     app{},
+		},
+		{
+			name:    "list-cognito command",
+			args:    []string{"awbus", "list-cognito"},
+			setupFn: func() {},
+			app:     app{},
+		},
+		{
+			name:    "list-jwt command",
+			args:    []string{"awbus", "list-jwt"},
+			setupFn: func() {},
+			app:     app{},
 		},
 		{
 			name:    "get command missing args",
@@ -1626,6 +1674,18 @@ func TestAppRun(t *testing.T) { //nolint:funlen,gocognit,cyclop,gocyclo,maintidx
 				return nil
 			},
 			app: app{},
+			afterFn: func(t *testing.T) {
+				t.Helper()
+
+				got, err := keyring.Get(genericKeyringService, "myservice/myuser")
+				if err != nil {
+					t.Fatalf("get awbus-generic: %v", err)
+				}
+
+				if got != "my-secret" {
+					t.Fatalf("secret = %q", got)
+				}
+			},
 		},
 		{
 			name:    "put command no args",
@@ -1644,6 +1704,18 @@ func TestAppRun(t *testing.T) { //nolint:funlen,gocognit,cyclop,gocyclo,maintidx
 				return nil
 			},
 			app: app{},
+			afterFn: func(t *testing.T) {
+				t.Helper()
+
+				got, err := keyring.Get(genericKeyringService, "newservice/newuser")
+				if err != nil {
+					t.Fatalf("get awbus-generic: %v", err)
+				}
+
+				if got != "newsecret" {
+					t.Fatalf("secret = %q", got)
+				}
+			},
 		},
 		{
 			name:    "put command prompt error",
@@ -1980,6 +2052,9 @@ func TestIsSecretLabel(t *testing.T) {
 		{label: "AccessKeyId", want: false},
 		{label: "Username", want: false},
 		{label: "Profile Name", want: false},
+		{label: `Migrate 10 secret(s) into "awbus-generic"? [y/N]`, want: false},
+		{label: `Profile "x" exists; overwrite? [y/N]`, want: false},
+		{label: `Delete profile "x"? [Enter/y to confirm]`, want: false},
 	}
 
 	for _, tt := range tests {
@@ -2020,7 +2095,7 @@ func TestPutReadsStdinWithoutDevPath(t *testing.T) {
 		t.Fatalf("run put: %v", err)
 	}
 
-	got, err := keyring.Get("svc", "user")
+	got, err := keyring.Get(genericKeyringService, "svc/user")
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}

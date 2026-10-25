@@ -628,27 +628,27 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 		fmt.Println(keyringService, version)
 	case "get":
 		if len(filteredArgs) < 4 { //nolint:mnd // ok
-			err = errors.New("get command requires service and username arguments")
+			err = errors.New("get command requires kind and name arguments")
 			break
 		}
 
 		var out string
 
-		out, err = keyring.Get(filteredArgs[2], filteredArgs[3])
+		out, err = getGeneric(filteredArgs[2], filteredArgs[3])
 		if err != nil {
 			break
 		}
 
 		fmt.Println(out)
 	case "put":
-		var service, username, secret string
+		var kind, name, secret string
 
 		if len(filteredArgs) >= 3 { //nolint:mnd // ok
-			service = filteredArgs[2]
+			kind = filteredArgs[2]
 		}
 
 		if len(filteredArgs) >= 4 { //nolint:mnd // ok
-			username = filteredArgs[3]
+			name = filteredArgs[3]
 		}
 
 		var (
@@ -665,11 +665,11 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 			secret = strings.TrimRight(string(input), "\r\n")
 		}
 
-		if err = a.promptIfEmpty("Service", &service); err != nil {
+		if err = a.promptIfEmpty("Service", &kind); err != nil {
 			break
 		}
 
-		if err = a.promptIfEmpty("Username", &username); err != nil {
+		if err = a.promptIfEmpty("Username", &name); err != nil {
 			break
 		}
 
@@ -677,7 +677,21 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 			break
 		}
 
-		err = keyring.Set(service, username, secret)
+		err = putGeneric(kind, name, secret)
+	case "list":
+		err = a.listAll()
+	case "list-profiles":
+		err = printListSection("profiles", keyringService)
+	case "list-sts-url":
+		err = printListSection("sts-url", stsURLKeyringService)
+	case "list-cognito":
+		err = printListSection("cognito", cognitoKeyringService)
+	case "list-jwt":
+		err = printListSection("jwt", jwtKeyringService)
+	case "list-generic":
+		err = printListSection("generic", genericKeyringService)
+	case "migrate":
+		err = a.migrateFromConfigs(filteredArgs[2:])
 	case "help":
 		fmt.Println(help)
 	default:
@@ -688,9 +702,11 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 }
 
 func isSecretLabel(label string) bool {
-	l := strings.ToLower(label)
+	l := strings.ToLower(strings.TrimSpace(label))
 
-	return strings.Contains(l, "secret") || strings.Contains(l, "password")
+	// Only actual secret fields — not confirm prompts that mention "secret"
+	// in prose (e.g. `Migrate N secret(s) into ...? [y/N]`).
+	return strings.HasPrefix(l, "secret") || strings.HasPrefix(l, "password")
 }
 
 func prompt(label string, val *string) (err error) {
