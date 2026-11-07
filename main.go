@@ -118,7 +118,7 @@ const (
 // IAM access keys are eventually consistent. After rotate we poll STS
 // GetCallerIdentity with the new key until it works (or we hit the cap).
 // Vars (not consts) so tests can shrink the window without sleeping 30s.
-var rotatePropagateInterval = 50 * time.Millisecond //nolint:gochecknoglobals // ok
+var rotatePropagateInterval = 500 * time.Millisecond //nolint:gochecknoglobals // ok
 
 var rotatePropagateTimeout = 30 * time.Second //nolint:gochecknoglobals // ok
 
