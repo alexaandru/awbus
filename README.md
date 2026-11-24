@@ -54,8 +54,8 @@ and these flags:
 - `-profile <name>` - Override profile name (takes precedence over `AWS_PROFILE`). Used by
   `load`/`store`/`store-assume`/`rotate`/`delete`/`sts-url` only.
 - `-pool <name>` - Which Cognito pool config to use (default: `"default"`). Used by
-  `jwt`/`jwt-add-user`/`jwt-set-default-user` only, entirely independent of `-profile`/`AWS_PROFILE` -
-  Cognito needs no AWS credentials, so a pool's config and users aren't tied to any AWS profile.
+  `jwt`/`jwt-add-user`/`jwt-change-password`/`jwt-set-default-user`, independently of
+  `-profile`/`AWS_PROFILE`. Cognito needs no AWS credentials.
 - `-user <sel>`, `-token <kind>` - see the Cognito JWTs section below.
 
 Commands:
@@ -70,6 +70,7 @@ Commands:
 | `sts-url`              | 🔏 Cached, auto-refreshed presigned STS `GetCallerIdentity` URL                            |
 | `jwt`                  | 🪪 Cached, auto-refreshed Cognito User Pool JWT (auto-provisions on first use)             |
 | `jwt-add-user`         | ➕ Register an additional existing Cognito user with the pool (interactive)                |
+| `jwt-change-password`  | 🔑 Verify and replace a Cognito user's stored password                                     |
 | `jwt-set-default-user` | 🎯 Set the pool's default Cognito user                                                     |
 | `get`                  | 🔍 Get generic secret: `awbus get <kind> <name>` (awbus-generic, else legacy)              |
 | `put`                  | 💾 Store generic secret under `awbus-generic` as `kind/name`                               |
@@ -151,7 +152,14 @@ manage the set and its default explicitly:
 awbus jwt -user alice          # unambiguous prefix
 awbus jwt-add-user             # register another existing user
 awbus jwt-set-default-user -user bob
+awbus jwt-change-password -user bob
 ```
+
+`jwt-change-password` prompts for the user's current Cognito password and verifies
+it with Cognito before saving it locally and replacing the user's cached tokens.
+Omit `-user` to use the pool's default user. When Cognito rejects a stored password
+as incorrect during `jwt`, awbus prompts once on an interactive terminal and
+retries sign-in. It saves the replacement only if sign-in succeeds.
 
 ### TOTP one-time passwords
 

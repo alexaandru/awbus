@@ -48,11 +48,12 @@ type app struct { //nolint:govet // ok
 	config
 	iamAPI
 
-	prompt          func(label string, val *string) error
-	sleep           func(context.Context, time.Duration) error
-	mkSTSClient     func(aws.CredentialsProvider) stsAPI
-	mkPresignClient func(aws.CredentialsProvider) stsPresignAPI
-	mkCognitoClient func() cognitoIdpAPI
+	prompt            func(label string, val *string) error
+	promptJWTRecovery func(label string, val *string) error
+	sleep             func(context.Context, time.Duration) error
+	mkSTSClient       func(aws.CredentialsProvider) stsAPI
+	mkPresignClient   func(aws.CredentialsProvider) stsPresignAPI
+	mkCognitoClient   func() cognitoIdpAPI
 }
 
 //nolint:inamedparam // ok
@@ -155,26 +156,33 @@ var krDel = func(profile string) error { //nolint:gochecknoglobals // ok
 	return keyring.Delete(keyringService, profile)
 }
 
-func newApp(iamClient iamAPI) (a app, err error) {
-	if err = confetti.Load(&a.config, confetti.WithEnv("")); err != nil {
+func newApp(iamClient iamAPI) (cli app, err error) {
+	if err = confetti.Load(&cli.config, confetti.WithEnv("")); err != nil {
 		return
 	}
 
-	a.iamAPI = iamClient
-	a.prompt = prompt
-	a.sleep = sleepCtx
-	a.SessionTTL = cmp.Or(a.SessionTTL, defaultSessionTTL)
-	a.SkewPad = cmp.Or(a.SkewPad, defaultSkewPad)
-	a.AWSProfile = cmp.Or(a.AWSProfile, defaultProfileName)
-	a.AWSRegion = cmp.Or(a.AWSRegion, defaultRegion)
-	a.mkSTSClient = func(creds aws.CredentialsProvider) stsAPI {
-		return sts.New(sts.Options{Credentials: creds, Region: a.AWSRegion})
+	cli.iamAPI = iamClient
+	cli.prompt = prompt
+
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		cli.promptJWTRecovery = func(label string, val *string) error {
+			return promptTo(os.Stderr, label, val)
+		}
 	}
-	a.mkPresignClient = func(creds aws.CredentialsProvider) stsPresignAPI {
-		return sts.NewPresignClient(sts.New(sts.Options{Credentials: creds, Region: a.AWSRegion}))
+
+	cli.sleep = sleepCtx
+	cli.SessionTTL = cmp.Or(cli.SessionTTL, defaultSessionTTL)
+	cli.SkewPad = cmp.Or(cli.SkewPad, defaultSkewPad)
+	cli.AWSProfile = cmp.Or(cli.AWSProfile, defaultProfileName)
+	cli.AWSRegion = cmp.Or(cli.AWSRegion, defaultRegion)
+	cli.mkSTSClient = func(creds aws.CredentialsProvider) stsAPI {
+		return sts.New(sts.Options{Credentials: creds, Region: cli.AWSRegion})
 	}
-	a.mkCognitoClient = func() cognitoIdpAPI {
-		return cip.New(cip.Options{Region: a.AWSRegion})
+	cli.mkPresignClient = func(creds aws.CredentialsProvider) stsPresignAPI {
+		return sts.NewPresignClient(sts.New(sts.Options{Credentials: creds, Region: cli.AWSRegion}))
+	}
+	cli.mkCognitoClient = func() cognitoIdpAPI {
+		return cip.New(cip.Options{Region: cli.AWSRegion})
 	}
 
 	return
@@ -598,6 +606,8 @@ func (a *app) run(ctx context.Context, args []string) (err error) {
 		fmt.Println(token)
 	case "jwt-add-user":
 		err = a.addCognitoUser(poolName)
+	case "jwt-change-password":
+		err = a.changeCognitoPassword(ctx, poolName, userFlag)
 	case "jwt-set-default-user":
 		err = a.setDefaultCognitoUser(poolName, userFlag)
 	case "rotate":
@@ -737,7 +747,13 @@ func isSecretLabel(label string) bool {
 }
 
 func prompt(label string, val *string) (err error) {
-	fmt.Print("Enter ", label, ": ")
+	return promptTo(os.Stdout, label, val)
+}
+
+func promptTo(out io.Writer, label string, val *string) (err error) {
+	if _, err = fmt.Fprint(out, "Enter ", label, ": "); err != nil {
+		return fmt.Errorf("write prompt: %w", err)
+	}
 
 	fd := int(os.Stdin.Fd())
 	if isSecretLabel(label) && term.IsTerminal(fd) {
@@ -745,7 +761,7 @@ func prompt(label string, val *string) (err error) {
 
 		b, err = term.ReadPassword(fd)
 
-		fmt.Println()
+		fmt.Fprintln(out) //nolint:errcheck // best-effort
 
 		if err != nil {
 			return fmt.Errorf("read %s: %w", label, err)

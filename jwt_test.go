@@ -584,6 +584,146 @@ func TestAppJWT(t *testing.T) { //nolint:funlen,gocognit,cyclop // ok
 	}
 }
 
+func TestCognitoPasswordReplacement(t *testing.T) { //nolint:funlen,gocognit,gocyclo,cyclop // verifies the shared explicit and recovery paths
+	tests := []struct {
+		name      string
+		rejection string
+		wantCalls int
+		manual    bool
+		terminal  bool
+		succeed   bool
+	}{
+		{name: "manual change bypasses fresh cache", manual: true, wantCalls: 1, succeed: true},
+		{name: "manual rejection keeps the existing cache", manual: true, wantCalls: 1},
+		{name: "recovery succeeds", terminal: true, wantCalls: 2, succeed: true},
+		{name: "recovery tries only once", terminal: true, wantCalls: 2},
+		{name: "noninteractive call returns rejection", wantCalls: 1},
+		{name: "unrelated authorization error is returned", terminal: true, wantCalls: 1, rejection: "User is disabled."},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			keyring.MockInit()
+
+			pool := CognitoPool{
+				UserPoolID:  "pool1",
+				ClientID:    "client1",
+				DefaultUser: "alice",
+				Users:       []CognitoUser{{Username: "alice", Password: "old"}, {Username: "bob", Password: "other"}},
+			}
+			setCognitoPool(t, "p", pool)
+
+			key := jwtCacheKey("p", pool, "alice")
+
+			if tt.manual {
+				cached := jwtCache{IDToken: "old-token", IssuedAt: time.Now(), ExpiresIn: time.Hour}
+				if err := cached.store(key); err != nil {
+					t.Fatalf("store original cache: %v", err)
+				}
+			}
+
+			var calls, prompts int
+
+			cli := app{
+				prompt: func(label string, value *string) error {
+					prompts++
+
+					if label != "Password for alice (replacement)" {
+						t.Fatalf("unexpected prompt: %q", label)
+					}
+
+					*value = "replacement"
+
+					return nil
+				},
+				mkCognitoClient: func() cognitoIdpAPI {
+					return &mockCognitoClient{initiateAuthFunc: func(_ context.Context, in *cip.InitiateAuthInput, _ ...func(*cip.Options)) (*cip.InitiateAuthOutput, error) {
+						calls++
+
+						if in.AuthFlow != types.AuthFlowTypeUserPasswordAuth || in.AuthParameters["USERNAME"] != "alice" {
+							t.Fatal("expected password authentication for alice")
+						}
+
+						wantPassword := "old"
+						if tt.manual || calls > 1 {
+							wantPassword = "replacement"
+						}
+
+						if in.AuthParameters["PASSWORD"] != wantPassword {
+							t.Fatal("used the wrong password")
+						}
+
+						if wantPassword == "replacement" && tt.succeed {
+							return authResult("new-token", "access", "refresh", 3600), nil
+						}
+
+						message := tt.rejection
+						if message == "" {
+							message = "Incorrect username or password."
+						}
+
+						return nil, &types.NotAuthorizedException{Message: &message}
+					}}
+				},
+			}
+			if tt.terminal {
+				cli.promptJWTRecovery = cli.prompt
+			}
+
+			var err error
+			if tt.manual {
+				err = cli.run(t.Context(), []string{"awbus", "jwt-change-password", "-pool", "p"})
+			} else {
+				var token string
+
+				token, err = cli.jwt(t.Context(), "p", "", "")
+				if tt.succeed && token != "new-token" {
+					t.Fatal("did not return the token from the successful retry")
+				}
+			}
+
+			if (err == nil) != tt.succeed || calls != tt.wantCalls {
+				t.Fatalf("error = %v, auth calls = %d, want success %v and %d calls", err, calls, tt.succeed, tt.wantCalls)
+			}
+
+			wantPrompts := 0
+			if tt.manual || tt.wantCalls == 2 {
+				wantPrompts = 1
+			}
+
+			if prompts != wantPrompts {
+				t.Fatalf("prompts = %d, want %d", prompts, wantPrompts)
+			}
+
+			var stored CognitoPool
+			if err = stored.load("p"); err != nil {
+				t.Fatalf("reload pool: %v", err)
+			}
+
+			if tt.succeed {
+				pool.Users[0].Password = "replacement"
+			}
+
+			if stored.DefaultUser != pool.DefaultUser || !slices.Equal(stored.Users, pool.Users) {
+				t.Fatal("unexpected stored users or default")
+			}
+
+			var cache jwtCache
+			if tt.succeed {
+				if err = cache.load(key); err != nil || cache.IDToken != "new-token" || cache.RefreshToken != "refresh" {
+					t.Fatalf("expected replacement token cache, load error = %v", err)
+				}
+			} else if tt.manual {
+				if err = cache.load(key); err != nil || cache.IDToken != "old-token" {
+					t.Fatalf("expected original token cache, load error = %v", err)
+				}
+			} else if err = cache.load(key); !errors.Is(err, keyring.ErrNotFound) {
+				t.Fatalf("expected no cached token, load error = %v", err)
+			}
+		})
+	}
+}
+
 func TestAppAddCognitoUser(t *testing.T) { //nolint:funlen // ok
 	tests := []struct {
 		setupFn func(t *testing.T)

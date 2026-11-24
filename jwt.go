@@ -1,10 +1,12 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -287,11 +289,13 @@ func (a *app) resolveJWT(ctx context.Context, poolName, userFlag string) (cache 
 		}
 	}
 
-	return a.resolveJWTForUser(ctx, jwtCacheKey(poolName, pool, user.Username), pool, user)
+	return a.resolveJWTForUser(ctx, poolName, pool, user)
 }
 
-func (a *app) resolveJWTForUser(ctx context.Context, key string, pool CognitoPool, user CognitoUser) (cache jwtCache, err error) { //nolint:lll // ok
+func (a *app) resolveJWTForUser(ctx context.Context, poolName string, pool CognitoPool, user CognitoUser) (cache jwtCache, err error) { //nolint:lll // ok
+	key := jwtCacheKey(poolName, pool, user.Username)
 	now := time.Now()
+
 	if err = cache.load(key); err == nil && cache.fresh(now, a.SkewPad) {
 		return
 	}
@@ -319,16 +323,88 @@ func (a *app) resolveJWTForUser(ctx context.Context, key string, pool CognitoPoo
 		}
 	}
 
-	cache, err = a.initiateAuth(ctx, svc, pool, types.AuthFlowTypeUserPasswordAuth, map[string]string{
-		"USERNAME": user.Username,
-		"PASSWORD": user.Password,
-	}, now)
+	cache, err = a.authenticateCognitoUser(ctx, svc, pool, user)
 	if err != nil {
+		var denied *types.NotAuthorizedException
+
+		if a.promptJWTRecovery != nil && errors.As(err, &denied) &&
+			strings.TrimSuffix(denied.ErrorMessage(), ".") == "Incorrect username or password" {
+			return a.replaceCognitoPassword(ctx, svc, poolName, pool, user, a.promptJWTRecovery)
+		}
+
 		return
 	}
 
 	if err = cache.store(key); err != nil {
 		err = fmt.Errorf("persist JWT cache: %w", err)
+	}
+
+	return
+}
+
+func (a *app) authenticateCognitoUser(ctx context.Context, svc cognitoIdpAPI, pool CognitoPool, user CognitoUser) (jwtCache, error) { //nolint:lll // ok
+	return a.initiateAuth(ctx, svc, pool, types.AuthFlowTypeUserPasswordAuth, map[string]string{
+		"USERNAME": user.Username,
+		"PASSWORD": user.Password,
+	}, time.Now())
+}
+
+func (a *app) replaceCognitoPassword(
+	ctx context.Context, svc cognitoIdpAPI, poolName string, pool CognitoPool, user CognitoUser,
+	promptFn func(string, *string) error,
+) (cache jwtCache, err error) {
+	var password string
+	if err = promptFn("Password for "+user.Username+" (replacement)", &password); err != nil {
+		return cache, fmt.Errorf("prompt replacement password: %w", err)
+	}
+
+	if password == "" {
+		return cache, errors.New("replacement password must not be empty")
+	}
+
+	replacement := CognitoUser{Username: user.Username, Password: password}
+
+	cache, err = a.authenticateCognitoUser(ctx, svc, pool, replacement)
+	if err != nil {
+		return
+	}
+
+	err = storeCognitoPassword(poolName, pool, user, replacement, cache)
+
+	return
+}
+
+func storeCognitoPassword(poolName string, pool CognitoPool, user, replacement CognitoUser, cache jwtCache) (err error) { //nolint:lll // ok
+	// Preserve edits made while waiting for the password and Cognito's reply.
+	current, err := loadConfiguredCognitoPool(poolName)
+	if err != nil {
+		return
+	}
+
+	if current.UserPoolID != pool.UserPoolID || current.ClientID != pool.ClientID {
+		return fmt.Errorf("cognito pool %q changed during sign-in", poolName)
+	}
+
+	index := slices.Index(current.Users, user)
+	if index < 0 {
+		return fmt.Errorf("stored Cognito user %q changed during sign-in", user.Username)
+	}
+
+	current.Users[index] = replacement
+
+	key := jwtCacheKey(poolName, pool, user.Username)
+	// Remove the old refresh token before saving the new password so a
+	// failed cache write cannot cause the next JWT call to reuse it.
+	if err = keyring.Delete(jwtKeyringService, key); err != nil && !errors.Is(err, keyring.ErrNotFound) {
+		return fmt.Errorf("clear previous JWT cache: %w", err)
+	}
+
+	if err = current.store(poolName); err != nil {
+		return fmt.Errorf("persist Cognito pool %q: %w", poolName, err)
+	}
+
+	if err = cache.store(key); err != nil {
+		return fmt.Errorf("persist JWT cache after saving password: %w", err)
 	}
 
 	return
@@ -443,6 +519,22 @@ func (a *app) setDefaultCognitoUser(poolName, userFlag string) (err error) {
 	pool.DefaultUser = user.Username
 
 	return pool.store(poolName)
+}
+
+func (a *app) changeCognitoPassword(ctx context.Context, poolName, userFlag string) (err error) {
+	pool, err := loadConfiguredCognitoPool(poolName)
+	if err != nil {
+		return
+	}
+
+	user, err := findCognitoUser(&pool, cmp.Or(userFlag, pool.DefaultUser), a.prompt)
+	if err != nil {
+		return
+	}
+
+	_, err = a.replaceCognitoPassword(ctx, a.mkCognitoClient(), poolName, pool, user, a.prompt)
+
+	return
 }
 
 func strOrEmpty(s *string) string {
